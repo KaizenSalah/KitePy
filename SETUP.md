@@ -20,7 +20,7 @@ pip install pytest
 
 ```bash
 # Clone the repository
-git clone https://github.com/ExtraKaizen/kitepy
+git clone https://github.com/KaizenSalah/kitepy
 cd kitepy
 
 # Install in development mode
@@ -201,6 +201,7 @@ If you encounter issues:
 3. Make sure all dependencies are installed
 4. Try the minimal working example above
 5. Check if your PyTorch installation is working:
+
    ```python
    import torch
    print(torch.__version__)

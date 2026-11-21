@@ -1,13 +1,11 @@
 """
 Audio Pillar - Speech and Audio Models
-
-This pillar will contain:
-- Audio: Audio classification
-- ASR: Automatic Speech Recognition (Whisper)
-- TTS: Text-to-Speech
-
-Coming in Phase 5!
 """
 
-# Placeholder - to be implemented
-__all__ = []
+from kitepy.core.adapters import register_pillar
+from kitepy.pillars.audio.data import load_audio_data
+from kitepy.pillars.audio.models import Audio, AudioCNN, AudioTransformer
+
+register_pillar("audio", data_loader=load_audio_data, default_task="classification")
+
+__all__ = ["Audio", "AudioCNN", "AudioTransformer", "load_audio_data"]

@@ -168,3 +168,5 @@ logs/
 _agents/
 _agent/
 rename_project.py
+
+report/

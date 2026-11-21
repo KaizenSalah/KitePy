@@ -1,13 +1,11 @@
 """
 Multimodal Pillar - Vision-Language Models (VLMs)
-
-This pillar will contain:
-- VLM: Vision-Language Model wrapper
-- CLIP: Contrastive Language-Image Pre-training
-- BLIP: Bootstrapping Language-Image Pre-training
-
-Coming in Phase 4!
 """
 
-# Placeholder - to be implemented
-__all__ = []
+from kitepy.core.adapters import register_pillar
+from kitepy.pillars.multimodal.data import load_multimodal_data
+from kitepy.pillars.multimodal.models import VLM, DualEncoderCLIP
+
+register_pillar("multimodal", data_loader=load_multimodal_data, default_task="contrastive")
+
+__all__ = ["VLM", "DualEncoderCLIP", "load_multimodal_data"]

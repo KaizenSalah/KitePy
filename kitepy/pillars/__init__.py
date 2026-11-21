@@ -1,12 +1,12 @@
 """
 Pillars - Domain-specific modules for kitepy.
 
-Each pillar contains models, data loaders, and utilities specific to that AI domain:
-- vision: Computer Vision (CNN, ViT)
-- language: Language Models (LLMs)
-- audio: Audio/Speech (ASR, TTS)
-- multimodal: Vision-Language (VLMs)
-- generative: Generative Models (Diffusion)
+- vision: Computer Vision (CNN, Transformer, Vision)
+- language: Language Models (LLM, TextClassifier)
+- multimodal: Vision-Language (VLM)
+- audio: Audio/Speech (Audio)
+- tabular: Tabular ML (Tabular)
+- generative: Generative Models (Generative: VAE, DDPM)
 """
 
-__all__ = ['vision', 'language', 'audio', 'multimodal', 'generative']
+__all__ = ["vision", "language", "audio", "multimodal", "tabular", "generative"]

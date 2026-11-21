@@ -53,7 +53,7 @@ Help us keep the `kitepy` community healthy and welcoming. Please be respectful 
    ```bash
    pytest tests/
    ```
-5. **Submit**: Push your branch and open a PR on the `ExtraKaizen/kitepy` repository.
+5. **Submit**: Push your branch and open a PR on the `KaizenSalah/kitepy` repository.
 
 ## Reporting Bugs
 

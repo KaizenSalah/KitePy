@@ -1,170 +1,105 @@
 # kitepy - Dead Simple Deep Learning 🚀
 
-Build and train deep learning models with **one line of code**.
+[![CI](https://github.com/KaizenSalah/kitepy/actions/workflows/ci.yml/badge.svg)](https://github.com/KaizenSalah/kitepy/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+Build and train deep learning models across **Vision, Language, Multimodal, Audio, Tabular, and Generative AI** with **one line of code**—while keeping full power-user control underneath.
 
 ```python
 from kitepy import CNN
 CNN("resnet18").train("cifar10")
 ```
 
-That's it. No boilerplate. No configuration hell. Just magic. ✨
+Simple by default. Unstoppable when you need control. ✨
 
 ---
 
 ## Features
 
-- **🎯 One-Line Training**: `CNN("resnet18").train("cifar10")`
-- **🔧 Zero Configuration**: Smart defaults that just work
-- **🎨 Full Customization**: Override anything when needed
-- **🌐 Multi-Modal**: CNNs & Transformers (LLMs, VLMs coming soon)
-- **⚡ Production Ready**: Built on PyTorch and timm (HuggingFace coming soon)
-- **🚄 Fast**: Automatic mixed precision (multi-GPU & distributed coming soon)
+- **🎯 One-Line Training with Smart Auto-Inference**: Automatically infers `num_classes`, `class_names`, and `input_dim` from folders, CSVs, and datasets.
+- **🧩 Universal `TaskAdapter` + `Engine`**: One battle-tested training loop supporting classification, binary, multi-label, regression, causal LM, contrastive VLM, generative (VAE/DDPM), or custom `train_step` hooks.
+- **🔧 Zero-Friction Callbacks & Logging**: Built-in `EarlyStopping`, `ModelCheckpoint`, `CSVLogger`, `LRMonitor`, `TensorBoardLogger`, `WandbLogger`, and `LambdaCallback`.
+- **⚡ Advanced Training Techniques**: Differential learning rates (`lr={"backbone": 1e-4, "head": 1e-3}`), layer-wise LR decay (`layer_decay`), EMA weights (`ema=True`), MixUp & CutMix, gradient accumulation, `max_steps`, `warmup_steps`, `lr="auto"` LR Finder, `bf16`/`fp16` AMP, and `accelerate` distributed support.
+- **🌐 6 Complete Pillars**:
+  - **Vision**: `CNN`, `Transformer` (ViT/DeiT/Swin), `Vision(task=...)` backed by 800+ `timm` models
+  - **Language**: `LLM`, `TextClassifier` (GPT/HF Transformers + LoRA)
+  - **Multimodal**: `VLM` (CLIP-style contrastive + zero-shot prediction)
+  - **Audio**: `Audio` (spectrogram CNN + automatic STFT for raw waveforms)
+  - **Tabular**: `Tabular` (`TabularResNet`, `TabularMLP` for CSV/NumPy/Tensor classification & regression)
+  - **Generative**: `Generative` (`ConvVAE`, `SimpleDDPM` with `.sample()`)
+- **🚀 Production Ready**: `.predict()` on file paths/PIL/NumPy/tensors with `top_k`, `.export()` to TorchScript/ONNX/SafeTensors, INT8 `.quantize()`, `.to_fastapi()`, and side-by-side `compare()`.
 
 ---
 
 ## Installation
 
 ```bash
-# Minimal install (CNN support)
+# Core install
 pip install kitepy
 
-# With LLM support
+# With LLM & HuggingFace support
 pip install kitepy[llm]
 
-# Full install (all features)
+# Full install
 pip install kitepy[all]
 
 # Development install
-git clone https://github.com/ExtraKaizen/kitepy
+git clone https://github.com/KaizenSalah/kitepy
 cd kitepy
-pip install -e .
+pip install -e .[dev]
 ```
 
 ---
 
 ## Quick Start
 
-### Example 1: Simplest Possible
+### Vision (CNN & ViT)
 
 ```python
-from kitepy import CNN
+from kitepy import CNN, Transformer
 
-# Train ResNet-18 on CIFAR-10
-CNN("resnet18").train("cifar10")
+# Auto-detects classes from an ImageFolder directory!
+model = CNN("resnet18").train("./my_dataset", epochs=10)
+
+# Real-world inference on image path with class names
+preds = model.predict("cat.jpg", top_k=3)
+
+# Vision Transformer transfer learning
+vit = Transformer("vit_tiny", pretrained=True, num_classes=10)
+vit.freeze_backbone()  # Accurately freezes backbone & ViT MLP blocks, keeps head trainable
+vit.train("cifar10", epochs=5, lr={"backbone": 1e-4, "head": 1e-3}, ema=True)
 ```
 
-### Example 2: Custom Settings
+### Language (LLM & Text Classification)
 
 ```python
-# Override any parameter
-CNN("resnet50").train(
-    data="cifar100",
-    epochs=50,
-    batch_size=128,
-    lr=0.001,
-)
+from kitepy import LLM, TextClassifier
+
+llm = LLM("tiny_gpt", lora=True)
+llm.train(["kitepy makes deep learning simple", ...], epochs=3)
+print(llm.generate("kitepy", max_new_tokens=20))
+
+clf = TextClassifier("tiny_gpt", num_classes=2)
+clf.train("synthetic", epochs=2)
 ```
 
-### Example 3: Save and Load
+### Tabular, Audio, Multimodal, Generative
 
 ```python
-# Train and save
-model = CNN("resnet18")
-model.train("cifar10", epochs=10)
-model.save("my_model.pt")
+from kitepy import Tabular, Audio, VLM, Generative
 
-# Load and use
-loaded = CNN.load("my_model.pt")
-predictions = loaded.predict(my_images)
-```
-
-### Example 4: Custom PyTorch Model
-
-```python
-import torch.nn as nn
-
-# Use your own model
-my_model = nn.Sequential(
-    nn.Conv2d(3, 64, 3),
-    nn.ReLU(),
-    # ... your architecture
-)
-
-CNN(my_model).train("my_dataset")
+Tabular("tabular_resnet", task="classification").train("data.csv", epochs=10)
+Audio("audio_cnn", num_classes=10).train("synthetic", epochs=5)
+VLM("clip_tiny").train("synthetic", epochs=5)
+gen = Generative("vae_small").train("synthetic", epochs=5)
+samples = gen.sample(n=4)
 ```
 
 ---
 
-## Supported Models
+## Power-User Controls
 
-### CNNs (Vision)
-- **ResNet**: `resnet18`, `resnet34`, `resnet50`, `resnet101`, `resnet152`
-- **EfficientNet**: `efficientnet_b0` through `efficientnet_b7`
-- **MobileNet**: `mobilenet_v2`, `mobilenet_v3_small`, `mobilenet_v3_large`
-- **VGG**: `vgg11`, `vgg13`, `vgg16`, `vgg19`
-- **DenseNet**: `densenet121`, `densenet169`, `densenet201`
-- **And 800+ more from timm!**
-
-### Vision Transformers
-- **ViT**: `vit_tiny`, `vit_small`, `vit_base`, `vit_large`, `vit_huge`
-- **DeiT**: `deit_tiny`, `deit_small`, `deit_base`
-- **Swin**: `swin_tiny`, `swin_small`, `swin_base`, `swin_large`
-
-### Coming Soon (Phase 2+)
-- **LLMs**: GPT, LLaMA, Mistral (Phase 3)
-- **VLMs**: CLIP, BLIP, Flamingo (Phase 4)
-- **Audio**: Whisper, AST (Phase 5)
-- **Diffusion**: Stable Diffusion (Phase 5)
-
----
-
-## Supported Datasets
-
-### Built-in Vision Datasets
-- `cifar10`, `cifar100`
-- `mnist`, `fashion_mnist`
-- `imagenet` (requires manual download)
-
-### Custom Datasets
-```python
-# From path (ImageFolder structure)
-CNN("resnet18").train("/path/to/my/dataset")
-
-# From PyTorch DataLoader
-from torch.utils.data import DataLoader
-my_loader = DataLoader(...)
-CNN("resnet18").train(my_loader)
-```
-
----
-
-## Advanced Usage
-
-### Configuration System
-
-```python
-from kitepy import CNN, CNNConfig, TrainingConfig
-
-# Method 1: Config objects
-model_config = CNNConfig(
-    depth=50,
-    num_classes=100,
-    dropout=0.5
-)
-
-train_config = TrainingConfig(
-    epochs=100,
-    batch_size=256,
-    lr=0.01,
-    optimizer="adamw",
-    scheduler="cosine",
-)
-
-model = CNN("resnet50", config=model_config)
-model.train("cifar100", **train_config.to_dict())
-```
-
-### YAML Configuration
+### Nested YAML Configuration
 
 ```yaml
 # config.yaml
@@ -174,162 +109,69 @@ model:
   num_classes: 100
 
 training:
-  epochs: 100
-  batch_size: 256
-  lr: 0.01
-  optimizer: adamw
+  epochs: 50
+  batch_size: 64
+  lr: 0.001
+  gradient_accumulation_steps: 2
+  ema: true
+  mixup_alpha: 0.2
+  csv_log_dir: ./logs
+
+data:
+  augmentation: randaugment
 ```
 
 ```python
-model = CNN(config="config.yaml")
-model.train("cifar100")
+from kitepy import CNN
+model = CNN("resnet50", config="config.yaml").train("cifar100")
 ```
 
-### Model Inspection
+### Custom Training Step & Escape Hatch
 
 ```python
-model = CNN("resnet18")
+# Hook custom loss/step logic while keeping KitePy's AMP, callbacks, and checkpointing
+def my_step(engine, batch):
+    x, y = batch
+    logits = engine.model(x)
+    loss = my_custom_loss(logits, y)
+    return loss, logits, y
 
-# Show architecture and config
-model.describe()
+CNN(my_nn_module).train(my_loader, train_step=my_step, callbacks=["early_stopping", "csv"])
 
-# Show parameter count
-model.summary()
-
-# Show all config options
-model.explain_config()
-
-# Get underlying PyTorch model
+# Or drop down to raw PyTorch anytime
 pytorch_model = model.unwrap()
 ```
 
-### List Available Models
+### Benchmark Models Side-by-Side
 
 ```python
-from kitepy import list_models, list_datasets
-
-# List all CNN models
-models = list_models("cnn")
-print(models)  # ['resnet18', 'resnet50', ...]
-
-# List all datasets
-datasets = list_datasets()
-print(datasets)  # ['cifar10', 'imagenet', ...]
-```
-
-### Register Custom Presets
-
-```python
-from kitepy import register_preset
-
-register_preset("cnn", "my_custom_resnet", {
-    "arch": "resnet",
-    "depth": 101,
-    "width_multiplier": 2.0,
-})
-
-# Now use it
-CNN("my_custom_resnet").train("imagenet")
+from kitepy import compare
+results = compare(["resnet18", "mobilenet_v3_small", "efficientnet_b0"], data="cifar10", epochs=3)
 ```
 
 ---
 
-## API Reference
+## Testing
 
-### CNN
-
-```python
-CNN(
-    model: str | nn.Module,           # Model name or custom PyTorch model
-    config: dict | Config | str,      # Config dict, object, or YAML path
-    **kwargs                          # Override any config value
-)
-```
-
-**Methods:**
-- `.train(data, epochs, **kwargs)` - Train the model
-- `.evaluate(data)` - Evaluate on test data
-- `.predict(input)` - Run inference
-- `.save(path)` - Save checkpoint
-- `.load(path)` - Load checkpoint (classmethod)
-- `.describe()` - Print model info
-- `.summary()` - Print parameter count
-- `.explain_config()` - Show config options
-- `.unwrap()` - Get PyTorch model
-
----
-
-## Architecture
+The test suite is organized cleanly into unit and integration layers:
 
 ```
-kitepy/
-├── api/           # Public APIs (CNN, LLM, VLM, etc.)
-├── core/          # Core engines (training, data, optimization)
-├── config/        # Configuration system
-├── models/        # Architecture templates
-├── data/          # Data loading
-├── wrappers/      # timm, HuggingFace wrappers
-└── utils/         # Utilities
+tests/
+├── conftest.py
+├── unit/
+│   ├── core/          # Adapters, Callbacks, Config, Engine, LRFinder, Metrics, Presets, Utils
+│   └── pillars/       # Vision, Language, Multimodal, Audio, Tabular, Generative
+└── integration/       # End-to-end pipelines & advanced power-user workflows
 ```
 
-**Key Principle**: We wrap existing ecosystems (PyTorch, timm, HuggingFace) instead of reimplementing.
+Run all tests with:
 
----
-
-## Development Roadmap
-
-- [x] **Phase 1**: CNN Module ✅
-- [x] **Phase 2**: Vision Transformers ✅
-- [ ] **Phase 3**: LLM Module (Coming Soon)
-- [ ] **Phase 4**: VLM Module (Planned)
-- [ ] **Phase 5**: Audio & Diffusion (Planned)
-
----
-
-## Requirements
-
-- Python >= 3.8
-- PyTorch >= 2.0.0
-- timm >= 0.9.0 (for vision models)
-- transformers >= 4.30.0 (for LLMs, optional)
-
----
-
-## Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+```bash
+pytest -v
+```
 
 ---
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-## Citation
-
-If you use kitepy in your research, please cite:
-
-```bibtex
-@software{kitepy2026,
-  title={kitepy: Dead Simple Deep Learning},
-  author={ExtraKaizen},
-  year={2026},
-  url={https://github.com/ExtraKaizen/kitepy}
-}
-```
-
----
-
-## Acknowledgments
-
-Built on the shoulders of giants:
-- [PyTorch](https://pytorch.org/)
-- [timm](https://github.com/huggingface/pytorch-image-models)
-- [HuggingFace Transformers](https://huggingface.co/transformers)
-- [PyTorch Lightning](https://lightning.ai/)
-
----
-
-**Made with ❤️ for the AI community**

@@ -1,60 +1,175 @@
 """
 kitepy - Dead Simple Deep Learning Framework
 
-Structure:
-- kitepy.core: Shared infrastructure (Engine, Config, etc.)
-- kitepy.pillars: Domain-specific modules (Vision, Language, etc.)
+Simple on the surface, infinitely extensible underneath:
+- kitepy.core: Adapters, Engine, Config, Callbacks, Metrics, Presets
+- kitepy.pillars: Vision, Language, Multimodal, Audio, Tabular, Generative
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
-# Import Core Components
 from kitepy.core import (
-    # Configs
-    BaseConfig, TrainingConfig, DataConfig, ModelConfig,
-    CNNConfig, TransformerConfig, LLMConfig, VLMConfig, RNNConfig,
-    # Engine & Training
-    Engine,
-    Callback, CallbackList, EarlyStopping, ModelCheckpoint, 
-    LRMonitor, ProgressLogger, LambdaCallback,
-    # Metrics
-    MetricTracker, accuracy, precision_recall_f1,
-    # Base
+    ADAPTER_REGISTRY,
+    AudioConfig,
+    BaseConfig,
     BaseModel,
-    # Utils
-    LRFinder, print_device_info, print_version_info, set_seed
+    BinaryClassificationAdapter,
+    Callback,
+    CallbackList,
+    CausalLMAdapter,
+    ClassificationAdapter,
+    CNNConfig,
+    ContrastiveAdapter,
+    CSVLogger,
+    CustomStepAdapter,
+    DataConfig,
+    DetectionAdapter,
+    EarlyStopping,
+    Engine,
+    ExecutionPlan,
+    ExecutionPlanner,
+    ExperimentConfig,
+    GenerativeAdapter,
+    GenerativeConfig,
+    LambdaCallback,
+    LLMConfig,
+    LRFinder,
+    LRMonitor,
+    MetricTracker,
+    ModelCheckpoint,
+    ModelConfig,
+    ModelEMA,
+    MultiLabelClassificationAdapter,
+    ProgressLogger,
+    RegressionAdapter,
+    RNNConfig,
+    RuntimeGuard,
+    SegmentationAdapter,
+    SequenceClassificationAdapter,
+    TabularConfig,
+    TaskAdapter,
+    TensorBoardLogger,
+    TrainingConfig,
+    TransformerConfig,
+    VLMConfig,
+    WandbLogger,
+    accuracy,
+    atomic_torch_save,
+    compare,
+    get_adapter,
+    get_lineage_metadata,
+    get_logger,
+    load_safe_bundle,
+    precision_recall_f1,
+    print_device_info,
+    print_version_info,
+    register_pillar,
+    save_safe_bundle,
+    set_log_level,
+    set_seed,
 )
-
-# Import Registry
-from kitepy.core.presets import list_models, list_datasets, register_preset
-
-# Import Pillars
+from kitepy.core.presets import list_datasets, list_models, register_preset
+from kitepy.pillars.audio import Audio
+from kitepy.pillars.generative import Generative
+from kitepy.pillars.language import LLM, TextClassifier
+from kitepy.pillars.multimodal import VLM
+from kitepy.pillars.tabular import Tabular
 from kitepy.pillars.vision import (
-    CNN, Transformer, Vision, 
-    load_vision_data, get_train_transforms,
-    DATASET_PRESETS, MODEL_PRESETS
+    CNN,
+    DATASET_PRESETS,
+    MODEL_PRESETS,
+    Transformer,
+    Vision,
+    get_train_transforms,
+    get_val_transforms,
+    load_vision_data,
 )
 
-# Forward compatibility aliases
 load_data = load_vision_data
 
 __all__ = [
-    # Core
-    'BaseConfig', 'TrainingConfig', 'DataConfig', 'ModelConfig',
-    'CNNConfig', 'TransformerConfig', 'LLMConfig', 'VLMConfig', 'RNNConfig',
-    'Engine', 'BaseModel', 'LRFinder',
-    'Callback', 'CallbackList', 'EarlyStopping', 'ModelCheckpoint', 
-    'LRMonitor', 'ProgressLogger', 'LambdaCallback',
-    'MetricTracker', 'accuracy', 'precision_recall_f1',
-    
-    # Registry
-    'list_models', 'list_datasets', 'register_preset',
-    
-    # Utils
-    'print_device_info', 'print_version_info', 'set_seed',
-    
-    # Vision Pillar
-    'CNN', 'Transformer', 'Vision',
-    'load_vision_data', 'load_data', 'get_train_transforms',
-    'DATASET_PRESETS', 'MODEL_PRESETS',
+    "__version__",
+    # Core & Adapters
+    "TaskAdapter",
+    "ClassificationAdapter",
+    "BinaryClassificationAdapter",
+    "MultiLabelClassificationAdapter",
+    "RegressionAdapter",
+    "CausalLMAdapter",
+    "SequenceClassificationAdapter",
+    "ContrastiveAdapter",
+    "GenerativeAdapter",
+    "SegmentationAdapter",
+    "DetectionAdapter",
+    "CustomStepAdapter",
+    "ADAPTER_REGISTRY",
+    "get_adapter",
+    "register_pillar",
+    # Configs
+    "BaseConfig",
+    "TrainingConfig",
+    "DataConfig",
+    "ModelConfig",
+    "CNNConfig",
+    "TransformerConfig",
+    "LLMConfig",
+    "VLMConfig",
+    "AudioConfig",
+    "TabularConfig",
+    "GenerativeConfig",
+    "RNNConfig",
+    "ExperimentConfig",
+    # Engine & Base
+    "Engine",
+    "BaseModel",
+    "compare",
+    "ModelEMA",
+    "ExecutionPlan",
+    "ExecutionPlanner",
+    "RuntimeGuard",
+    "get_logger",
+    "set_log_level",
+    "atomic_torch_save",
+    "get_lineage_metadata",
+    "save_safe_bundle",
+    "load_safe_bundle",
+    "LRFinder",
+    # Callbacks
+    "Callback",
+    "CallbackList",
+    "EarlyStopping",
+    "ModelCheckpoint",
+    "LRMonitor",
+    "ProgressLogger",
+    "CSVLogger",
+    "WandbLogger",
+    "TensorBoardLogger",
+    "LambdaCallback",
+    # Metrics
+    "MetricTracker",
+    "accuracy",
+    "precision_recall_f1",
+    # Registry & Utils
+    "list_models",
+    "list_datasets",
+    "register_preset",
+    "print_device_info",
+    "print_version_info",
+    "set_seed",
+    # Pillars
+    "CNN",
+    "Transformer",
+    "Vision",
+    "LLM",
+    "TextClassifier",
+    "VLM",
+    "Audio",
+    "Tabular",
+    "Generative",
+    "load_vision_data",
+    "load_data",
+    "get_train_transforms",
+    "get_val_transforms",
+    "DATASET_PRESETS",
+    "MODEL_PRESETS",
 ]

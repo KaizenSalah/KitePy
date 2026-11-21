@@ -1,11 +1,10 @@
 """
 Model and dataset preset registry.
 
-This is the "magic" - users type "resnet18" and we resolve it to a full config.
+Users type "resnet18", "vit_tiny", "gpt2", "clip_base", etc. and we resolve it to a full config.
 """
 
 from typing import Dict, Any, List, Optional
-from .config import CNNConfig, TransformerConfig, LLMConfig, VLMConfig, RNNConfig
 
 
 # ============================================================================
@@ -14,20 +13,20 @@ from .config import CNNConfig, TransformerConfig, LLMConfig, VLMConfig, RNNConfi
 
 CNN_PRESETS: Dict[str, Dict[str, Any]] = {
     # ResNet family
-    "resnet18": {"arch": "resnet", "depth": 18, "num_classes": 1000},
-    "resnet34": {"arch": "resnet", "depth": 34, "num_classes": 1000},
-    "resnet50": {"arch": "resnet", "depth": 50, "num_classes": 1000},
-    "resnet101": {"arch": "resnet", "depth": 101, "num_classes": 1000},
-    "resnet152": {"arch": "resnet", "depth": 152, "num_classes": 1000},
-    
+    "resnet18": {"arch": "resnet", "depth": 18},
+    "resnet34": {"arch": "resnet", "depth": 34},
+    "resnet50": {"arch": "resnet", "depth": 50},
+    "resnet101": {"arch": "resnet", "depth": 101},
+    "resnet152": {"arch": "resnet", "depth": 152},
+
     # Wide ResNet
     "wide_resnet50": {"arch": "resnet", "depth": 50, "width_multiplier": 2.0},
     "wide_resnet101": {"arch": "resnet", "depth": 101, "width_multiplier": 2.0},
-    
+
     # ResNeXt
     "resnext50": {"arch": "resnext", "depth": 50, "groups": 32, "base_width": 4},
     "resnext101": {"arch": "resnext", "depth": 101, "groups": 32, "base_width": 8},
-    
+
     # EfficientNet family
     "efficientnet_b0": {"arch": "efficientnet", "depth": 0},
     "efficientnet_b1": {"arch": "efficientnet", "depth": 1},
@@ -37,27 +36,33 @@ CNN_PRESETS: Dict[str, Dict[str, Any]] = {
     "efficientnet_b5": {"arch": "efficientnet", "depth": 5},
     "efficientnet_b6": {"arch": "efficientnet", "depth": 6},
     "efficientnet_b7": {"arch": "efficientnet", "depth": 7},
-    
+
     # EfficientNetV2
     "efficientnetv2_s": {"arch": "efficientnetv2", "depth": "s"},
     "efficientnetv2_m": {"arch": "efficientnetv2", "depth": "m"},
     "efficientnetv2_l": {"arch": "efficientnetv2", "depth": "l"},
-    
+
     # MobileNet
     "mobilenet_v2": {"arch": "mobilenetv2"},
     "mobilenet_v3_small": {"arch": "mobilenetv3", "variant": "small"},
     "mobilenet_v3_large": {"arch": "mobilenetv3", "variant": "large"},
-    
+
     # VGG
     "vgg11": {"arch": "vgg", "depth": 11},
     "vgg13": {"arch": "vgg", "depth": 13},
     "vgg16": {"arch": "vgg", "depth": 16},
     "vgg19": {"arch": "vgg", "depth": 19},
-    
+
     # DenseNet
     "densenet121": {"arch": "densenet", "depth": 121},
     "densenet169": {"arch": "densenet", "depth": 169},
     "densenet201": {"arch": "densenet", "depth": 201},
+
+    # ConvNeXt
+    "convnext_tiny": {"arch": "convnext"},
+    "convnext_small": {"arch": "convnext"},
+    "convnext_base": {"arch": "convnext"},
+    "convnext_large": {"arch": "convnext"},
 }
 
 
@@ -66,7 +71,6 @@ CNN_PRESETS: Dict[str, Dict[str, Any]] = {
 # ============================================================================
 
 TRANSFORMER_PRESETS: Dict[str, Dict[str, Any]] = {
-    # ViT (Vision Transformer)
     "vit_tiny": {
         "arch": "vit",
         "img_size": 224,
@@ -107,17 +111,17 @@ TRANSFORMER_PRESETS: Dict[str, Dict[str, Any]] = {
         "depth": 32,
         "num_heads": 16,
     },
-    
-    # DeiT (Data-efficient ViT)
-    "deit_tiny": {"arch": "deit", "embed_dim": 192, "depth": 12, "num_heads": 3},
-    "deit_small": {"arch": "deit", "embed_dim": 384, "depth": 12, "num_heads": 6},
-    "deit_base": {"arch": "deit", "embed_dim": 768, "depth": 12, "num_heads": 12},
-    
+
+    # DeiT
+    "deit_tiny": {"arch": "deit", "img_size": 224, "patch_size": 16, "embed_dim": 192, "depth": 12, "num_heads": 3},
+    "deit_small": {"arch": "deit", "img_size": 224, "patch_size": 16, "embed_dim": 384, "depth": 12, "num_heads": 6},
+    "deit_base": {"arch": "deit", "img_size": 224, "patch_size": 16, "embed_dim": 768, "depth": 12, "num_heads": 12},
+
     # Swin Transformer
-    "swin_tiny": {"arch": "swin", "embed_dim": 96, "depths": [2, 2, 6, 2]},
-    "swin_small": {"arch": "swin", "embed_dim": 96, "depths": [2, 2, 18, 2]},
-    "swin_base": {"arch": "swin", "embed_dim": 128, "depths": [2, 2, 18, 2]},
-    "swin_large": {"arch": "swin", "embed_dim": 192, "depths": [2, 2, 18, 2]},
+    "swin_tiny": {"arch": "swin", "img_size": 224, "embed_dim": 96, "depths": [2, 2, 6, 2]},
+    "swin_small": {"arch": "swin", "img_size": 224, "embed_dim": 96, "depths": [2, 2, 18, 2]},
+    "swin_base": {"arch": "swin", "img_size": 224, "embed_dim": 128, "depths": [2, 2, 18, 2]},
+    "swin_large": {"arch": "swin", "img_size": 224, "embed_dim": 192, "depths": [2, 2, 18, 2]},
 }
 
 
@@ -126,7 +130,15 @@ TRANSFORMER_PRESETS: Dict[str, Dict[str, Any]] = {
 # ============================================================================
 
 LLM_PRESETS: Dict[str, Dict[str, Any]] = {
-    # GPT-2 style models
+    "tiny_gpt": {
+        "arch": "gpt",
+        "n_layers": 2,
+        "d_model": 128,
+        "n_heads": 4,
+        "d_ff": 512,
+        "vocab_size": 260,
+        "context_length": 128,
+    },
     "gpt2": {
         "arch": "gpt",
         "n_layers": 12,
@@ -154,8 +166,6 @@ LLM_PRESETS: Dict[str, Dict[str, Any]] = {
         "vocab_size": 50257,
         "context_length": 1024,
     },
-    
-    # Custom sizes
     "gpt_125m": {
         "arch": "gpt",
         "n_layers": 12,
@@ -192,8 +202,6 @@ LLM_PRESETS: Dict[str, Dict[str, Any]] = {
         "vocab_size": 50257,
         "context_length": 2048,
     },
-    
-    # LLaMA-style models
     "llama_1b": {
         "arch": "llama",
         "n_layers": 22,
@@ -230,14 +238,12 @@ LLM_PRESETS: Dict[str, Dict[str, Any]] = {
         "activation": "swiglu",
         "pos_encoding": "rope",
     },
-    
-    # Mistral-style (uses GQA)
     "mistral_7b": {
         "arch": "mistral",
         "n_layers": 32,
         "d_model": 4096,
         "n_heads": 32,
-        "n_kv_heads": 8,  # Grouped Query Attention
+        "n_kv_heads": 8,
         "d_ff": 14336,
         "vocab_size": 32000,
         "context_length": 8192,
@@ -249,10 +255,17 @@ LLM_PRESETS: Dict[str, Dict[str, Any]] = {
 
 
 # ============================================================================
-# VLM PRESETS
+# VLM, AUDIO, TABULAR, GENERATIVE, RNN PRESETS
 # ============================================================================
 
 VLM_PRESETS: Dict[str, Dict[str, Any]] = {
+    "clip_tiny": {
+        "arch": "clip",
+        "vision_model": "resnet18",
+        "text_model": "tiny_gpt",
+        "projection_dim": 128,
+        "task": "contrastive",
+    },
     "clip_base": {
         "arch": "clip",
         "vision_model": "vit_base",
@@ -275,32 +288,27 @@ VLM_PRESETS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+AUDIO_PRESETS: Dict[str, Dict[str, Any]] = {
+    "audio_cnn": {"arch": "audio_cnn", "hidden_dim": 128},
+    "audio_transformer": {"arch": "audio_transformer", "hidden_dim": 192},
+}
 
-# ============================================================================
-# RNN PRESETS
-# ============================================================================
+TABULAR_PRESETS: Dict[str, Dict[str, Any]] = {
+    "tabular_mlp": {"arch": "tabular_mlp", "hidden_dims": [128, 64]},
+    "tabular_resnet": {"arch": "tabular_resnet", "hidden_dims": [128, 128, 64]},
+}
+
+GENERATIVE_PRESETS: Dict[str, Dict[str, Any]] = {
+    "vae_small": {"arch": "vae", "latent_dim": 32, "base_channels": 32, "img_size": 32},
+    "vae_base": {"arch": "vae", "latent_dim": 64, "base_channels": 64, "img_size": 64},
+    "ddpm_small": {"arch": "ddpm", "base_channels": 32, "img_size": 32, "timesteps": 100},
+}
 
 RNN_PRESETS: Dict[str, Dict[str, Any]] = {
-    "lstm_small": {
-        "rnn_type": "lstm",
-        "hidden_size": 256,
-        "num_layers": 2,
-    },
-    "lstm_base": {
-        "rnn_type": "lstm",
-        "hidden_size": 512,
-        "num_layers": 3,
-    },
-    "lstm_large": {
-        "rnn_type": "lstm",
-        "hidden_size": 1024,
-        "num_layers": 4,
-    },
-    "gru_base": {
-        "rnn_type": "gru",
-        "hidden_size": 512,
-        "num_layers": 3,
-    },
+    "lstm_small": {"rnn_type": "lstm", "hidden_size": 256, "num_layers": 2},
+    "lstm_base": {"rnn_type": "lstm", "hidden_size": 512, "num_layers": 3},
+    "lstm_large": {"rnn_type": "lstm", "hidden_size": 1024, "num_layers": 4},
+    "gru_base": {"rnn_type": "gru", "hidden_size": 512, "num_layers": 3},
 }
 
 
@@ -314,66 +322,93 @@ DATASET_PRESETS: Dict[str, Dict[str, Any]] = {
         "name": "cifar10",
         "num_classes": 10,
         "img_size": 32,
+        "in_channels": 3,
+        "modality": "vision",
         "source": "torchvision",
+        "class_names": [
+            "airplane", "automobile", "bird", "cat", "deer",
+            "dog", "frog", "horse", "ship", "truck"
+        ],
     },
     "cifar100": {
         "name": "cifar100",
         "num_classes": 100,
         "img_size": 32,
+        "in_channels": 3,
+        "modality": "vision",
         "source": "torchvision",
     },
     "imagenet": {
         "name": "imagenet-1k",
         "num_classes": 1000,
         "img_size": 224,
+        "in_channels": 3,
+        "modality": "vision",
         "source": "torchvision",
     },
     "imagenet21k": {
         "name": "imagenet-21k",
         "num_classes": 21843,
         "img_size": 224,
+        "in_channels": 3,
+        "modality": "vision",
         "source": "huggingface",
     },
     "mnist": {
         "name": "mnist",
         "num_classes": 10,
         "img_size": 28,
+        "in_channels": 1,
+        "modality": "vision",
         "source": "torchvision",
+        "class_names": [str(i) for i in range(10)],
     },
     "fashion_mnist": {
         "name": "fashion_mnist",
         "num_classes": 10,
         "img_size": 28,
+        "in_channels": 1,
+        "modality": "vision",
         "source": "torchvision",
+        "class_names": [
+            "T-shirt/top", "Trouser", "Pullover", "Dress", "Coat",
+            "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"
+        ],
     },
-    
+
     # Text datasets
     "wikitext": {
         "name": "wikitext",
         "subset": "wikitext-103-v1",
+        "modality": "language",
         "source": "huggingface",
     },
     "openwebtext": {
         "name": "openwebtext",
+        "modality": "language",
         "source": "huggingface",
     },
     "c4": {
         "name": "c4",
+        "modality": "language",
         "source": "huggingface",
     },
     "pile": {
         "name": "EleutherAI/pile",
+        "modality": "language",
         "source": "huggingface",
     },
-    
+
     # Multimodal datasets
     "coco": {
         "name": "coco",
+        "modality": "multimodal",
         "source": "huggingface",
         "task": "captioning",
     },
     "flickr30k": {
         "name": "flickr30k",
+        "modality": "multimodal",
         "source": "huggingface",
         "task": "captioning",
     },
@@ -384,81 +419,80 @@ DATASET_PRESETS: Dict[str, Dict[str, Any]] = {
 # REGISTRY FUNCTIONS
 # ============================================================================
 
-def list_models(modality: str = "all") -> List[str]:
+MODALITY_REGISTRIES: Dict[str, Dict[str, Dict[str, Any]]] = {
+    "cnn": CNN_PRESETS,
+    "transformer": TRANSFORMER_PRESETS,
+    "llm": LLM_PRESETS,
+    "language": LLM_PRESETS,
+    "vlm": VLM_PRESETS,
+    "multimodal": VLM_PRESETS,
+    "audio": AUDIO_PRESETS,
+    "tabular": TABULAR_PRESETS,
+    "generative": GENERATIVE_PRESETS,
+    "rnn": RNN_PRESETS,
+}
+
+
+def list_models(modality: str = "all") -> Any:
     """List all available model presets for a given modality."""
-    if modality == "cnn" or modality == "vision":
-        return list(CNN_PRESETS.keys())
-    elif modality == "transformer":
-        return list(TRANSFORMER_PRESETS.keys())
-    elif modality == "llm" or modality == "language":
-        return list(LLM_PRESETS.keys())
-    elif modality == "vlm" or modality == "multimodal":
-        return list(VLM_PRESETS.keys())
-    elif modality == "rnn":
-        return list(RNN_PRESETS.keys())
-    elif modality == "all":
+    if modality == "vision":
+        return list(CNN_PRESETS.keys()) + list(TRANSFORMER_PRESETS.keys())
+    if modality in MODALITY_REGISTRIES:
+        return list(MODALITY_REGISTRIES[modality].keys())
+    if modality == "all":
         return {
             "cnn": list(CNN_PRESETS.keys()),
             "transformer": list(TRANSFORMER_PRESETS.keys()),
             "llm": list(LLM_PRESETS.keys()),
             "vlm": list(VLM_PRESETS.keys()),
+            "audio": list(AUDIO_PRESETS.keys()),
+            "tabular": list(TABULAR_PRESETS.keys()),
+            "generative": list(GENERATIVE_PRESETS.keys()),
             "rnn": list(RNN_PRESETS.keys()),
         }
-    else:
-        raise ValueError(f"Unknown modality: {modality}")
+    raise ValueError(f"Unknown modality: {modality}")
 
 
 def list_datasets(modality: str = "all") -> List[str]:
     """List all available dataset presets."""
     if modality == "all":
         return list(DATASET_PRESETS.keys())
-    
-    # Filter by modality
+
     datasets = []
     for name, info in DATASET_PRESETS.items():
-        if modality == "vision" and "img_size" in info:
+        if info.get("modality") == modality:
             datasets.append(name)
-        elif modality == "text" and "subset" in info or "source" in info:
+        elif modality == "text" and info.get("modality") == "language":
             datasets.append(name)
-        elif modality == "multimodal" and "task" in info:
-            datasets.append(name)
-    
     return datasets
 
 
 def get_preset(name: str, modality: Optional[str] = None) -> Dict[str, Any]:
     """Get a preset configuration by name."""
-    # Try to find in all registries if modality not specified
-    if modality is None:
-        all_presets = {
-            **CNN_PRESETS,
-            **TRANSFORMER_PRESETS,
-            **LLM_PRESETS,
-            **VLM_PRESETS,
-            **RNN_PRESETS,
-        }
-        if name in all_presets:
-            return all_presets[name]
+    if modality is None or modality == "vision":
+        if modality == "vision":
+            pool = {**CNN_PRESETS, **TRANSFORMER_PRESETS}
         else:
-            raise ValueError(f"Preset '{name}' not found")
-    
-    # Look in specific modality
-    if modality == "cnn":
-        registry = CNN_PRESETS
-    elif modality == "transformer":
-        registry = TRANSFORMER_PRESETS
-    elif modality == "llm":
-        registry = LLM_PRESETS
-    elif modality == "vlm":
-        registry = VLM_PRESETS
-    elif modality == "rnn":
-        registry = RNN_PRESETS
-    else:
+            pool = {
+                **CNN_PRESETS,
+                **TRANSFORMER_PRESETS,
+                **LLM_PRESETS,
+                **VLM_PRESETS,
+                **AUDIO_PRESETS,
+                **TABULAR_PRESETS,
+                **GENERATIVE_PRESETS,
+                **RNN_PRESETS,
+            }
+        if name in pool:
+            return pool[name]
+        raise ValueError(f"Preset '{name}' not found")
+
+    if modality not in MODALITY_REGISTRIES:
         raise ValueError(f"Unknown modality: {modality}")
-    
+
+    registry = MODALITY_REGISTRIES[modality]
     if name not in registry:
         raise ValueError(f"Preset '{name}' not found in {modality} registry")
-    
     return registry[name]
 
 
@@ -466,35 +500,46 @@ def register_preset(
     name: str,
     config: Dict[str, Any],
     modality: str,
-    overwrite: bool = False
+    overwrite: bool = False,
 ):
     """Register a custom preset."""
-    if modality == "cnn":
-        registry = CNN_PRESETS
-    elif modality == "transformer":
-        registry = TRANSFORMER_PRESETS
-    elif modality == "llm":
-        registry = LLM_PRESETS
-    elif modality == "vlm":
-        registry = VLM_PRESETS
-    elif modality == "rnn":
-        registry = RNN_PRESETS
-    else:
+    if modality not in MODALITY_REGISTRIES:
         raise ValueError(f"Unknown modality: {modality}")
-    
+    registry = MODALITY_REGISTRIES[modality]
+
     if name in registry and not overwrite:
         raise ValueError(
             f"Preset '{name}' already exists. Set overwrite=True to replace."
         )
-    
+
     registry[name] = config
     print(f"✓ Registered preset '{name}' in {modality} registry")
-# Combined registry
+
+
 MODEL_PRESETS = {
     **CNN_PRESETS,
     **TRANSFORMER_PRESETS,
     **LLM_PRESETS,
     **VLM_PRESETS,
+    **AUDIO_PRESETS,
+    **TABULAR_PRESETS,
+    **GENERATIVE_PRESETS,
     **RNN_PRESETS,
 }
 
+__all__ = [
+    "CNN_PRESETS",
+    "TRANSFORMER_PRESETS",
+    "LLM_PRESETS",
+    "VLM_PRESETS",
+    "AUDIO_PRESETS",
+    "TABULAR_PRESETS",
+    "GENERATIVE_PRESETS",
+    "RNN_PRESETS",
+    "DATASET_PRESETS",
+    "MODEL_PRESETS",
+    "list_models",
+    "list_datasets",
+    "get_preset",
+    "register_preset",
+]

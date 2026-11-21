@@ -1,590 +1,536 @@
 """
-Universal data loading engine for all modalities.
+Vision data loading engine.
 
-Handles vision, text, audio, and multimodal datasets.
+Handles:
+- Built-in datasets (CIFAR-10, CIFAR-100, MNIST, Fashion-MNIST, ImageNet)
+- Custom ImageFolder directories (pre-split or auto-split WITHOUT augmentation leak!)
+- Synthetic datasets for zero-download smoke testing
+- HuggingFace Datasets (`hf://dataset_name`)
+- Automatic metadata extraction (num_classes, class_names, img_size, in_channels)
 """
 
-import torch
-from torch.utils.data import DataLoader, Dataset
-from typing import Optional, Tuple, Union, Any
 from pathlib import Path
-import warnings
+from typing import Any, Dict, Optional, Tuple, Union
+
+import torch
+from torch.utils.data import DataLoader, Dataset, Subset
 
 from kitepy.core.config import DataConfig, TrainingConfig
 from kitepy.core.presets import DATASET_PRESETS
 
 
 # ============================================================================
-# SYNTHETIC DATA (For testing)
+# SYNTHETIC DATA (For fast testing without downloads)
 # ============================================================================
 
 class SyntheticDataset(Dataset):
     """Synthetic dataset for testing training loops without downloads."""
-    
+
     def __init__(
         self,
         num_samples: int = 100,
         img_size: int = 224,
+        in_channels: int = 3,
         num_classes: int = 10,
-        transform=None
+        transform=None,
     ):
         self.num_samples = num_samples
         self.img_size = img_size
+        self.in_channels = in_channels
         self.num_classes = num_classes
         self.transform = transform
-        
-        # Generate random data once (reproducible if needed)
-        self.data = torch.randn(num_samples, 3, img_size, img_size)
+
+        self.data = torch.randn(num_samples, in_channels, img_size, img_size)
         self.targets = torch.randint(0, num_classes, (num_samples,))
-    
+
     def __len__(self):
         return self.num_samples
-    
-    def __getitem__(self, idx):
-        sample = self.data[idx]
-        target = self.targets[idx]
-        
-        # Note: In a real dataset, you'd apply transforms to PIL images
-        # Here we just simulate it
-        if self.transform:
-            # We skip actual PIL conversion for speed in synthetic mode
-            pass
-            
-        return sample, target
 
+    def __getitem__(self, idx):
+        return self.data[idx], self.targets[idx]
+
+
+class SyntheticSegmentationDataset(Dataset):
+    """Synthetic (image, pixel_mask) dataset for semantic segmentation."""
+
+    def __init__(self, num_samples: int = 32, img_size: int = 64, in_channels: int = 3, num_classes: int = 2):
+        self.images = torch.randn(num_samples, in_channels, img_size, img_size)
+        self.masks = torch.randint(0, num_classes, (num_samples, img_size, img_size))
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        return self.images[idx], self.masks[idx]
+
+
+class SyntheticDetectionDataset(Dataset):
+    """Synthetic (image, box/label target dict) dataset for object detection."""
+
+    def __init__(self, num_samples: int = 24, img_size: int = 64, in_channels: int = 3, num_classes: int = 10):
+        self.images = torch.rand(num_samples, in_channels, img_size, img_size)
+        self.targets = []
+        for _ in range(num_samples):
+            x1 = torch.randint(1, img_size // 2, (2,)).float()
+            y1 = torch.randint(1, img_size // 2, (2,)).float()
+            boxes = torch.stack([x1, y1, x1 + 10.0, y1 + 10.0], dim=1)
+            labels = torch.randint(1, max(2, num_classes), (2,))
+            self.targets.append({"boxes": boxes, "labels": labels})
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx):
+        return self.images[idx], self.targets[idx]
+
+
+def detection_collate_fn(batch):
+    """Collate function for variable-length detection targets."""
+    return [b[0] for b in batch], [b[1] for b in batch]
+
+
+# ============================================================================
+# CUSTOM IMAGE FOLDER LOADING
+# ============================================================================
 
 def _load_custom_folder(
     data_path: Path,
     train_transform,
     val_transform,
     train_config: TrainingConfig,
-    val_split: float = 0.2
-) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
+    data_config: DataConfig,
+) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader], Dict[str, Any]]:
     """
-    Load custom image folder dataset.
-    
-    Expects folder structure:
-    data_path/
-      class1/
-        img1.jpg
-        img2.jpg
-      class2/
-        img1.jpg
-        ...
-    
-    OR:
-    data_path/
-      train/
-        class1/...
-        class2/...
-      val/
-        class1/...
-        class2/...
+    Load custom image folder dataset without leaking train_transform into validation.
     """
     from torchvision import datasets
-    from torch.utils.data import random_split
-    
+
     train_path = data_path / "train"
     val_path = data_path / "val"
-    
-    # Check if pre-split exists
-    if train_path.is_dir() and val_path.is_dir():
+    test_path = data_path / "test"
+
+    bs = train_config.batch_size if isinstance(train_config.batch_size, int) else 32
+
+    if train_path.is_dir():
         train_dataset = datasets.ImageFolder(train_path, transform=train_transform)
-        val_dataset = datasets.ImageFolder(val_path, transform=val_transform)
-        print(f"✓ Loaded custom dataset from {data_path}")
-        print(f"  - Train: {len(train_dataset)} samples, {len(train_dataset.classes)} classes")
-        print(f"  - Val: {len(val_dataset)} samples")
+        classes = list(train_dataset.classes)
+
+        if val_path.is_dir():
+            val_dataset = datasets.ImageFolder(val_path, transform=val_transform)
+        else:
+            # Split train folder into train/val using separate ImageFolder transforms
+            val_frac = data_config.val_split if isinstance(data_config.val_split, float) else 0.2
+            if val_frac > 0 and len(train_dataset) >= 5:
+                n_total = len(train_dataset)
+                val_len = max(1, int(n_total * val_frac))
+                gen = torch.Generator().manual_seed(train_config.seed)
+                perm = torch.randperm(n_total, generator=gen).tolist()
+                val_idx, train_idx = perm[:val_len], perm[val_len:]
+                val_full = datasets.ImageFolder(train_path, transform=val_transform)
+                train_dataset = Subset(train_dataset, train_idx)
+                val_dataset = Subset(val_full, val_idx)
+            else:
+                val_dataset = None
+
+        test_dataset = datasets.ImageFolder(test_path, transform=val_transform) if test_path.is_dir() else None
     else:
-        # Auto-split
-        full_dataset = datasets.ImageFolder(data_path, transform=train_transform)
-        val_size = int(len(full_dataset) * val_split)
-        train_size = len(full_dataset) - val_size
-        
-        train_dataset, val_dataset = random_split(
-            full_dataset, [train_size, val_size],
-            generator=torch.Generator().manual_seed(train_config.seed)
-        )
-        
-        print(f"✓ Loaded custom dataset from {data_path}")
-        print(f"  - Auto-split: {train_size} train, {val_size} val")
-        print(f"  - Classes: {len(full_dataset.classes)}")
-    
-    # Create DataLoaders
+        # Unsplit folder: create two ImageFolder instances so val NEVER gets train augmentations
+        full_train = datasets.ImageFolder(data_path, transform=train_transform)
+        full_val = datasets.ImageFolder(data_path, transform=val_transform)
+        classes = list(full_train.classes)
+
+        val_frac = data_config.val_split if isinstance(data_config.val_split, float) else 0.2
+        n_total = len(full_train)
+        val_size = max(1, int(n_total * val_frac)) if n_total >= 2 and val_frac > 0 else 0
+        train_size = n_total - val_size
+
+        gen = torch.Generator().manual_seed(train_config.seed)
+        perm = torch.randperm(n_total, generator=gen).tolist()
+        train_idx, val_idx = perm[:train_size], perm[train_size:]
+
+        train_dataset = Subset(full_train, train_idx)
+        val_dataset = Subset(full_val, val_idx) if val_idx else None
+        test_dataset = None
+
+    print(f"✓ Loaded custom dataset from {data_path} ({len(classes)} classes)")
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=train_config.batch_size,
-        shuffle=True,
+        batch_size=bs,
+        shuffle=data_config.shuffle,
         num_workers=train_config.num_workers,
         pin_memory=train_config.pin_memory,
-        drop_last=True,
+        drop_last=data_config.drop_last,
     )
-    
     val_loader = DataLoader(
         val_dataset,
-        batch_size=train_config.batch_size,
+        batch_size=bs,
         shuffle=False,
         num_workers=train_config.num_workers,
         pin_memory=train_config.pin_memory,
-    )
-    
-    return train_loader, val_loader, None
+    ) if val_dataset is not None else None
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=bs,
+        shuffle=False,
+        num_workers=train_config.num_workers,
+        pin_memory=train_config.pin_memory,
+    ) if test_dataset is not None else None
+
+    metadata = {"num_classes": len(classes), "class_names": classes}
+    return train_loader, val_loader, test_loader, metadata
 
 
 # ============================================================================
 # VISION DATA LOADING
 # ============================================================================
 
-def load_vision_data(
-    dataset_name: str,
+def load_vision_data_with_meta(
+    dataset_name: Any,
     data_config: DataConfig,
     train_config: TrainingConfig,
-    download: bool = True
-) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
+    download: bool = True,
+) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader], Dict[str, Any]]:
     """
-    Load vision datasets (CIFAR, ImageNet, etc.).
-    
-    Args:
-        dataset_name: Dataset name or path
-        data_config: Data configuration
-        train_config: Training configuration
-        download: Auto-download if not available
-    
-    Returns:
-        (train_loader, val_loader, test_loader)
+    Load vision datasets and return (train_loader, val_loader, test_loader, metadata).
     """
     try:
-        from torchvision import datasets, transforms
+        from torchvision import datasets
     except ImportError:
-        raise ImportError(
-            "torchvision is required for vision datasets. "
-            "Install with: pip install torchvision"
-        )
-    
-    # Check if it's a preset
-    if dataset_name in DATASET_PRESETS:
-        preset = DATASET_PRESETS[dataset_name]
-        img_size = preset.get('img_size', 224)
-        num_classes = preset.get('num_classes', 1000)
-    else:
-        img_size = 224
-        num_classes = 10
-    
-    # Define transforms
-    train_transform = get_train_transforms(img_size, data_config.augmentation)
-    val_transform = get_val_transforms(img_size)
-    
-    # Check if it's a custom folder path
+        raise ImportError("torchvision is required for vision datasets. Install with: pip install torchvision")
+
+    metadata: Dict[str, Any] = {}
+    bs = train_config.batch_size if isinstance(train_config.batch_size, int) else 32
+    data_dir = getattr(data_config, "data_dir", "./data") or "./data"
+
+    if not isinstance(dataset_name, str):
+        raise ValueError(f"Unsupported vision dataset argument: {type(dataset_name)}")
+
+    # Preset lookup
+    preset = DATASET_PRESETS.get(dataset_name, {})
+    target_img_size = data_config.img_size or preset.get("img_size", 224)
+    in_channels = data_config.in_channels or 3
+    num_classes = data_config.num_classes or preset.get("num_classes", 10)
+    is_grayscale_dataset = dataset_name in ("mnist", "fashion_mnist", "fashion-mnist")
+
+    if "class_names" in preset:
+        metadata["class_names"] = list(preset["class_names"])
+    if "num_classes" in preset:
+        metadata["num_classes"] = int(preset["num_classes"])
+    elif dataset_name == "synthetic":
+        metadata["num_classes"] = int(num_classes)
+
+    train_transform = get_train_transforms(
+        target_img_size,
+        data_config.augmentation,
+        to_rgb=(is_grayscale_dataset and in_channels == 3),
+        grayscale=(is_grayscale_dataset and in_channels == 1),
+    )
+    val_transform = get_val_transforms(
+        target_img_size,
+        to_rgb=(is_grayscale_dataset and in_channels == 3),
+        grayscale=(is_grayscale_dataset and in_channels == 1),
+    )
+
+    # Custom folder path
     data_path = Path(dataset_name)
     if data_path.is_dir():
-        return _load_custom_folder(
-            data_path, train_transform, val_transform, train_config
-        )
-    
-    # Load dataset
+        return _load_custom_folder(data_path, train_transform, val_transform, train_config, data_config)
+
+    # HuggingFace Hub vision dataset (`hf://...`)
+    if dataset_name.startswith("hf://"):
+        return _load_hf_vision_dataset(dataset_name[5:], train_transform, val_transform, bs, train_config)
+
+    test_dataset = None
+
     if dataset_name == "cifar10":
-        train_dataset = datasets.CIFAR10(
-            root='./data',
-            train=True,
-            download=download,
-            transform=train_transform
-        )
-        val_dataset = datasets.CIFAR10(
-            root='./data',
-            train=False,
-            download=download,
-            transform=val_transform
-        )
-        test_dataset = None  # CIFAR10 uses same test set
-    
+        train_dataset = datasets.CIFAR10(root=data_dir, train=True, download=download, transform=train_transform)
+        val_dataset = datasets.CIFAR10(root=data_dir, train=False, download=download, transform=val_transform)
+        metadata.setdefault("num_classes", 10)
+        metadata.setdefault("class_names", list(train_dataset.classes))
+
     elif dataset_name == "cifar100":
-        train_dataset = datasets.CIFAR100(
-            root='./data',
-            train=True,
-            download=download,
-            transform=train_transform
-        )
-        val_dataset = datasets.CIFAR100(
-            root='./data',
-            train=False,
-            download=download,
-            transform=val_transform
-        )
-        test_dataset = None
-    
+        train_dataset = datasets.CIFAR100(root=data_dir, train=True, download=download, transform=train_transform)
+        val_dataset = datasets.CIFAR100(root=data_dir, train=False, download=download, transform=val_transform)
+        metadata.setdefault("num_classes", 100)
+        metadata.setdefault("class_names", list(train_dataset.classes))
+
     elif dataset_name == "mnist":
-        train_dataset = datasets.MNIST(
-            root='./data',
-            train=True,
-            download=download,
-            transform=train_transform
-        )
-        val_dataset = datasets.MNIST(
-            root='./data',
-            train=False,
-            download=download,
-            transform=val_transform
-        )
-        test_dataset = None
-    
-    elif dataset_name == "fashion_mnist" or dataset_name == "fashion-mnist":
-        train_dataset = datasets.FashionMNIST(
-            root='./data',
-            train=True,
-            download=download,
-            transform=train_transform
-        )
-        val_dataset = datasets.FashionMNIST(
-            root='./data',
-            train=False,
-            download=download,
-            transform=val_transform
-        )
-        test_dataset = None
-    
-    elif dataset_name == "imagenet" or dataset_name == "imagenet-1k":
-        # ImageNet requires manual download
-        imagenet_path = Path("./data/imagenet")
+        train_dataset = datasets.MNIST(root=data_dir, train=True, download=download, transform=train_transform)
+        val_dataset = datasets.MNIST(root=data_dir, train=False, download=download, transform=val_transform)
+        metadata.setdefault("num_classes", 10)
+
+    elif dataset_name in ("fashion_mnist", "fashion-mnist"):
+        train_dataset = datasets.FashionMNIST(root=data_dir, train=True, download=download, transform=train_transform)
+        val_dataset = datasets.FashionMNIST(root=data_dir, train=False, download=download, transform=val_transform)
+        metadata.setdefault("num_classes", 10)
+
+    elif dataset_name in ("imagenet", "imagenet-1k"):
+        imagenet_path = Path(data_dir) / "imagenet"
         if not imagenet_path.exists():
             raise ValueError(
                 f"ImageNet not found at {imagenet_path}. "
-                "Please download ImageNet manually and place it in ./data/imagenet"
+                "Download ImageNet manually and place it in <data_dir>/imagenet"
             )
-        
-        train_dataset = datasets.ImageFolder(
-            root=str(imagenet_path / "train"),
-            transform=train_transform
-        )
-        val_dataset = datasets.ImageFolder(
-            root=str(imagenet_path / "val"),
-            transform=val_transform
-        )
-        test_dataset = None
-    
-    elif Path(dataset_name).exists():
-        # Custom dataset from path (assume ImageFolder structure)
-        data_path = Path(dataset_name)
-        
-        train_dataset = datasets.ImageFolder(
-            root=str(data_path / "train"),
-            transform=train_transform
-        )
-        
-        val_path = data_path / "val"
-        if val_path.exists():
-            val_dataset = datasets.ImageFolder(
-                root=str(val_path),
-                transform=val_transform
-            )
-        else:
-            val_dataset = None
-        
-        test_path = data_path / "test"
-        if test_path.exists():
-            test_dataset = datasets.ImageFolder(
-                root=str(test_path),
-                transform=val_transform
-            )
-        else:
-            test_dataset = None
-    
+        train_dataset = datasets.ImageFolder(root=str(imagenet_path / "train"), transform=train_transform)
+        val_dataset = datasets.ImageFolder(root=str(imagenet_path / "val"), transform=val_transform)
+        metadata["num_classes"] = len(train_dataset.classes)
+        metadata["class_names"] = list(train_dataset.classes)
+
     elif dataset_name == "synthetic":
-        # Create synthetic data for testing
-        num_samples = 128
-        train_dataset = SyntheticDataset(
-            num_samples=num_samples,
-            img_size=img_size,
-            num_classes=num_classes,
-            transform=train_transform
-        )
-        val_dataset = SyntheticDataset(
-            num_samples=train_config.batch_size * 2,
-            img_size=img_size,
-            num_classes=num_classes,
-            transform=val_transform
-        )
-        test_dataset = None
-    
+        task_name = (getattr(train_config, "task", None) or "classification").lower()
+        if task_name == "segmentation":
+            sz = data_config.img_size if data_config.img_size and data_config.img_size != 224 else 64
+            train_dataset = SyntheticSegmentationDataset(
+                num_samples=32, img_size=sz, in_channels=in_channels, num_classes=num_classes
+            )
+            val_dataset = SyntheticSegmentationDataset(
+                num_samples=max(8, bs), img_size=sz, in_channels=in_channels, num_classes=num_classes
+            )
+        elif task_name == "detection":
+            sz = data_config.img_size if data_config.img_size and data_config.img_size != 224 else 64
+            train_dataset = SyntheticDetectionDataset(
+                num_samples=24, img_size=sz, in_channels=in_channels, num_classes=num_classes
+            )
+            val_dataset = SyntheticDetectionDataset(
+                num_samples=max(8, bs), img_size=sz, in_channels=in_channels, num_classes=num_classes
+            )
+            train_loader = DataLoader(
+                train_dataset, batch_size=bs, shuffle=data_config.shuffle,
+                num_workers=train_config.num_workers, pin_memory=train_config.pin_memory,
+                collate_fn=detection_collate_fn,
+            )
+            val_loader = DataLoader(
+                val_dataset, batch_size=bs, shuffle=False,
+                num_workers=train_config.num_workers, pin_memory=train_config.pin_memory,
+                collate_fn=detection_collate_fn,
+            )
+            return train_loader, val_loader, None, metadata
+        else:
+            train_dataset = SyntheticDataset(
+                num_samples=128,
+                img_size=target_img_size,
+                in_channels=in_channels,
+                num_classes=num_classes,
+            )
+            val_dataset = SyntheticDataset(
+                num_samples=max(32, bs * 2),
+                img_size=target_img_size,
+                in_channels=in_channels,
+                num_classes=num_classes,
+            )
     else:
         raise ValueError(
             f"Unknown dataset: {dataset_name}. "
-            f"Available: {list(DATASET_PRESETS.keys()) + ['synthetic']}"
+            f"Available: {list(DATASET_PRESETS.keys()) + ['synthetic']} or a local folder path"
         )
-    
-    # Create data loaders
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=train_config.batch_size,
+        batch_size=bs,
         shuffle=data_config.shuffle,
         num_workers=train_config.num_workers,
         pin_memory=train_config.pin_memory,
         drop_last=data_config.drop_last,
     )
-    
-    val_loader = None
-    if val_dataset is not None:
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=train_config.batch_size,
-            shuffle=False,
-            num_workers=train_config.num_workers,
-            pin_memory=train_config.pin_memory,
-        )
-    
-    test_loader = None
-    if test_dataset is not None:
-        test_loader = DataLoader(
-            test_dataset,
-            batch_size=train_config.batch_size,
-            shuffle=False,
-            num_workers=train_config.num_workers,
-            pin_memory=train_config.pin_memory,
-        )
-    
-    return train_loader, val_loader, test_loader
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=bs,
+        shuffle=False,
+        num_workers=train_config.num_workers,
+        pin_memory=train_config.pin_memory,
+    ) if val_dataset is not None else None
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=bs,
+        shuffle=False,
+        num_workers=train_config.num_workers,
+        pin_memory=train_config.pin_memory,
+    ) if test_dataset is not None else None
+
+    return train_loader, val_loader, test_loader, metadata
 
 
-def get_train_transforms(img_size: int, augmentation: str = "auto"):
-    """
-    Get training transforms with augmentation.
-    
-    Args:
-        img_size: Target image size
-        augmentation: Augmentation level:
-            - "none": No augmentation
-            - "light" / "auto": Basic augmentation (flip, crop)
-            - "heavy": Strong augmentation (color jitter, rotation)
-            - "randaugment": RandAugment (state-of-the-art)
-            - "trivialaugment": TrivialAugment (SOTA, simpler)
-            - "autoaugment": AutoAugment (ImageNet policy)
-    """
+def load_vision_data(
+    dataset_name: str,
+    data_config: DataConfig,
+    train_config: TrainingConfig,
+    download: bool = True,
+) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
+    """Backward-compatible 3-tuple vision data loader."""
+    train_l, val_l, test_l, _ = load_vision_data_with_meta(
+        dataset_name, data_config, train_config, download=download
+    )
+    return train_l, val_l, test_l
+
+
+def _load_hf_vision_dataset(dataset_id: str, train_transform, val_transform, bs: int, train_config: TrainingConfig):
+    """Load an image classification dataset from HuggingFace Hub."""
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError("datasets required for hf:// datasets. Install with: pip install datasets")
+
+    ds = load_dataset(dataset_id)
+    train_split = ds["train"]
+    val_split = ds.get("validation") or ds.get("test")
+
+    class _HFImageDataset(Dataset):
+        def __init__(self, hf_ds, transform):
+            self.ds = hf_ds
+            self.transform = transform
+
+        def __len__(self):
+            return len(self.ds)
+
+        def __getitem__(self, idx):
+            item = self.ds[idx]
+            img = item["image"].convert("RGB")
+            label = item["label"]
+            return self.transform(img), label
+
+    features = train_split.features
+    label_feat = features.get("label")
+    classes = list(label_feat.names) if hasattr(label_feat, "names") else []
+    meta = {"num_classes": len(classes) if classes else 10, "class_names": classes}
+
+    train_loader = DataLoader(
+        _HFImageDataset(train_split, train_transform),
+        batch_size=bs, shuffle=True, num_workers=train_config.num_workers, pin_memory=train_config.pin_memory,
+    )
+    val_loader = DataLoader(
+        _HFImageDataset(val_split, val_transform),
+        batch_size=bs, shuffle=False, num_workers=train_config.num_workers, pin_memory=train_config.pin_memory,
+    ) if val_split is not None else None
+    return train_loader, val_loader, None, meta
+
+
+# ============================================================================
+# TRANSFORMS
+# ============================================================================
+
+def get_train_transforms(
+    img_size: int,
+    augmentation: str = "auto",
+    to_rgb: bool = False,
+    grayscale: bool = False,
+):
+    """Get training transforms with augmentation."""
     from torchvision import transforms
-    
-    # Check if grayscale (for MNIST, Fashion-MNIST)
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                    std=[0.229, 0.224, 0.225])
-    
-    if img_size == 28:  # MNIST/Fashion-MNIST
+
+    prefix = []
+    if to_rgb:
+        prefix.append(transforms.Grayscale(num_output_channels=3))
+
+    if grayscale:
         normalize = transforms.Normalize(mean=[0.5], std=[0.5])
-    
+    else:
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
     if augmentation == "none":
-        return transforms.Compose([
-            transforms.Resize(img_size),
+        core = [
+            transforms.Resize((img_size, img_size)),
             transforms.ToTensor(),
             normalize,
-        ])
-    
-    elif augmentation == "light" or augmentation == "auto":
-        return transforms.Compose([
+        ]
+    elif augmentation in ("light", "auto"):
+        core = [
             transforms.RandomResizedCrop(img_size),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
-        ])
-    
+        ]
     elif augmentation == "heavy":
-        return transforms.Compose([
+        core = [
             transforms.RandomResizedCrop(img_size),
             transforms.RandomHorizontalFlip(),
             transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4),
             transforms.RandomRotation(15),
             transforms.ToTensor(),
             normalize,
-        ])
-    
+        ]
     elif augmentation == "randaugment":
-        # RandAugment - state-of-the-art augmentation
-        return transforms.Compose([
+        core = [
             transforms.RandomResizedCrop(img_size),
             transforms.RandomHorizontalFlip(),
             transforms.RandAugment(num_ops=2, magnitude=9),
             transforms.ToTensor(),
             normalize,
-        ])
-    
+        ]
     elif augmentation == "trivialaugment":
-        # TrivialAugment - simpler, often better than RandAugment
-        return transforms.Compose([
+        core = [
             transforms.RandomResizedCrop(img_size),
             transforms.RandomHorizontalFlip(),
             transforms.TrivialAugmentWide(),
             transforms.ToTensor(),
             normalize,
-        ])
-    
+        ]
     elif augmentation == "autoaugment":
-        # AutoAugment with ImageNet policy
-        return transforms.Compose([
+        core = [
             transforms.RandomResizedCrop(img_size),
             transforms.RandomHorizontalFlip(),
             transforms.AutoAugment(transforms.AutoAugmentPolicy.IMAGENET),
             transforms.ToTensor(),
             normalize,
-        ])
-    
+        ]
     else:
-        raise ValueError(f"Unknown augmentation: {augmentation}. "
-                        f"Available: none, light, auto, heavy, randaugment, trivialaugment, autoaugment")
-
-
-def get_val_transforms(img_size: int):
-    """Get validation/test transforms (no augmentation)."""
-    from torchvision import transforms
-    
-    # Check if grayscale (for MNIST, Fashion-MNIST)
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                    std=[0.229, 0.224, 0.225])
-    
-    if img_size == 28:  # MNIST/Fashion-MNIST
-        normalize = transforms.Normalize(mean=[0.5], std=[0.5])
-    
-    return transforms.Compose([
-        transforms.Resize(img_size + 32),  # Slightly larger
-        transforms.CenterCrop(img_size),
-        transforms.ToTensor(),
-        normalize,
-    ])
-
-
-# ============================================================================
-# TEXT DATA LOADING
-# ============================================================================
-
-def load_text_data(
-    dataset_name: str,
-    data_config: DataConfig,
-    train_config: TrainingConfig,
-) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
-    """
-    Load text datasets (WikiText, OpenWebText, etc.).
-    
-    Args:
-        dataset_name: Dataset name
-        data_config: Data configuration
-        train_config: Training configuration
-    
-    Returns:
-        (train_loader, val_loader, test_loader)
-    """
-    try:
-        from datasets import load_dataset
-    except ImportError:
-        raise ImportError(
-            "datasets (HuggingFace) is required for text datasets. "
-            "Install with: pip install datasets"
+        raise ValueError(
+            f"Unknown augmentation: {augmentation}. "
+            "Available: none, light, auto, heavy, randaugment, trivialaugment, autoaugment"
         )
-    
-    # Load from HuggingFace datasets
-    if dataset_name == "wikitext":
-        dataset = load_dataset("wikitext", "wikitext-103-v1")
-    elif dataset_name == "openwebtext":
-        dataset = load_dataset("openwebtext")
-    elif dataset_name == "c4":
-        dataset = load_dataset("c4", "en", streaming=True)
+
+    return transforms.Compose(prefix + core)
+
+
+def get_val_transforms(
+    img_size: int,
+    to_rgb: bool = False,
+    grayscale: bool = False,
+):
+    """Get validation/test/inference transforms (no augmentation)."""
+    from torchvision import transforms
+
+    prefix = []
+    if to_rgb:
+        prefix.append(transforms.Grayscale(num_output_channels=3))
+
+    if grayscale:
+        normalize = transforms.Normalize(mean=[0.5], std=[0.5])
     else:
-        # Try loading directly
-        dataset = load_dataset(dataset_name)
-    
-    # TODO: Tokenization and collation
-    # This will be fully implemented in Phase 3 (LLM)
-    raise NotImplementedError(
-        "Text data loading will be fully implemented in Phase 3 (LLM module)"
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
+    return transforms.Compose(
+        prefix
+        + [
+            transforms.Resize((img_size, img_size)),
+            transforms.ToTensor(),
+            normalize,
+        ]
     )
 
-
-# ============================================================================
-# MULTIMODAL DATA LOADING
-# ============================================================================
-
-def load_multimodal_data(
-    dataset_name: str,
-    data_config: DataConfig,
-    train_config: TrainingConfig,
-) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
-    """
-    Load multimodal datasets (COCO, Flickr30k, etc.).
-    
-    Args:
-        dataset_name: Dataset name
-        data_config: Data configuration
-        train_config: Training configuration
-    
-    Returns:
-        (train_loader, val_loader, test_loader)
-    """
-    # TODO: Implement in Phase 4 (VLM)
-    raise NotImplementedError(
-        "Multimodal data loading will be implemented in Phase 4 (VLM module)"
-    )
-
-
-# ============================================================================
-# UNIVERSAL DATA LOADER
-# ============================================================================
-
-def load_data(
-    dataset_name: str,
-    modality: str,
-    data_config: DataConfig,
-    train_config: TrainingConfig,
-) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
-    """
-    Universal data loader - routes to appropriate loader based on modality.
-    
-    Args:
-        dataset_name: Dataset name or path
-        modality: "vision", "language", "multimodal"
-        data_config: Data configuration
-        train_config: Training configuration
-    
-    Returns:
-        (train_loader, val_loader, test_loader)
-    """
-    if modality == "vision":
-        return load_vision_data(dataset_name, data_config, train_config)
-    
-    elif modality == "language":
-        return load_text_data(dataset_name, data_config, train_config)
-    
-    elif modality == "multimodal":
-        return load_multimodal_data(dataset_name, data_config, train_config)
-    
-    else:
-        raise ValueError(f"Unknown modality: {modality}")
-
-
-# ============================================================================
-# CUSTOM DATASET WRAPPER
-# ============================================================================
 
 class CustomDatasetWrapper(Dataset):
     """Wrapper for custom user datasets."""
-    
+
     def __init__(self, dataset: Dataset, transform=None):
         self.dataset = dataset
         self.transform = transform
-    
+
     def __len__(self):
         return len(self.dataset)
-    
+
     def __getitem__(self, idx):
         item = self.dataset[idx]
-        
         if self.transform:
             item = self.transform(item)
-        
         return item
 
 
-# ============================================================================
-# EXPORT
-# ============================================================================
-
 __all__ = [
-    'load_data',
-    'load_vision_data',
-    'load_text_data',
-    'load_multimodal_data',
-    'get_train_transforms',
-    'get_val_transforms',
-    'CustomDatasetWrapper',
+    "SyntheticDataset",
+    "load_vision_data",
+    "load_vision_data_with_meta",
+    "get_train_transforms",
+    "get_val_transforms",
+    "CustomDatasetWrapper",
 ]

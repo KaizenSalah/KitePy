@@ -1,22 +1,30 @@
 """
-Vision Pillar - Computer Vision Models
-
-This pillar contains:
-- CNN: Convolutional Neural Networks (ResNet, EfficientNet, MobileNet, etc.)
-- Transformer: Vision Transformers (ViT, DeiT, Swin, BEiT, etc.)
-- Vision: Generic vision model wrapper
+Vision Pillar - Computer Vision Models & Data Pipeline
 """
 
-from kitepy.pillars.vision.models import CNN, Transformer, Vision
-from kitepy.pillars.vision.data import load_vision_data, get_train_transforms
+from kitepy.core.adapters import register_pillar
 from kitepy.core.presets import DATASET_PRESETS, MODEL_PRESETS
+from kitepy.pillars.vision.data import (
+    get_train_transforms,
+    get_val_transforms,
+    load_vision_data,
+    load_vision_data_with_meta,
+)
+from kitepy.pillars.vision.models import CNN, SimpleUNet, TinyDetector, Transformer, Vision
+
+# Register vision pillar with core BaseModel registry
+register_pillar("vision", data_loader=load_vision_data_with_meta, default_task="classification")
 
 __all__ = [
-    'CNN',
-    'Transformer', 
-    'Vision',
-    'load_vision_data',
-    'get_train_transforms',
-    'DATASET_PRESETS',
-    'MODEL_PRESETS',
+    "CNN",
+    "Transformer",
+    "Vision",
+    "SimpleUNet",
+    "TinyDetector",
+    "load_vision_data",
+    "load_vision_data_with_meta",
+    "get_train_transforms",
+    "get_val_transforms",
+    "DATASET_PRESETS",
+    "MODEL_PRESETS",
 ]

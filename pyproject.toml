@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kitepy"
-version = "0.1.0"
-description = "Dead Simple Deep Learning - Build and train models with minimal code"
+version = "0.2.0"
+description = "Dead Simple Deep Learning - Build and train models across Vision, Language, Multimodal, Audio, Tabular, and Generative AI with minimal code"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "you@example.com"}
+    {name = "Mousa Salah", email = "hi@mousa.dev"}
 ]
 keywords = ["deep learning", "machine learning", "pytorch", "neural networks", "ai"]
 classifiers = [
@@ -23,6 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
@@ -82,11 +83,14 @@ all = [
     "tensorboard>=2.13.0",
 ]
 
+[project.scripts]
+kitepy = "kitepy.cli:main"
+
 [project.urls]
-Homepage = "https://github.com/yourusername/kitepy"
-Documentation = "https://kitepy.readthedocs.io"
-Repository = "https://github.com/yourusername/kitepy"
-"Bug Tracker" = "https://github.com/yourusername/kitepy/issues"
+Homepage = "https://github.com/KaizenSalah/kitepy"
+Documentation = "https://github.com/KaizenSalah/kitepy#readme"
+Repository = "https://github.com/KaizenSalah/kitepy"
+"Bug Tracker" = "https://github.com/KaizenSalah/kitepy/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
