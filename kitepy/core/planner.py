@@ -9,6 +9,7 @@ Provides:
    effective batch mathematics) and NaN/Inf loss or gradient recovery.
 """
 
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, asdict
 import math
@@ -54,15 +55,21 @@ def estimate_static_memory_mb(model: nn.Module, bytes_per_param_state: float = 1
     return total_bytes / (1024.0 * 1024.0)
 
 
-def _slice_batch(batch: Any, start: int, end: int) -> Any:
-    """Slice a tensor, dict of tensors, or collated tuple/list batch along batch dim 0."""
+def _slice_batch(batch: Any, start: int, end: int, batch_size: Optional[int] = None) -> Any:
+    """Recursively slice tensors, nested dicts/mappings, or collated tuple/list batches along batch dim 0."""
+    bs = batch_size if batch_size is not None else infer_batch_size(batch)
     if isinstance(batch, torch.Tensor):
-        return batch[start:end]
-    if isinstance(batch, dict):
-        return {
-            k: (v[start:end] if isinstance(v, torch.Tensor) and v.ndim > 0 else v)
-            for k, v in batch.items()
-        }
+        return batch[start:end] if batch.ndim > 0 else batch
+    if isinstance(batch, Mapping):
+        sliced = {}
+        for k, v in batch.items():
+            if isinstance(v, (torch.Tensor, Mapping)):
+                sliced[k] = _slice_batch(v, start, end, batch_size=bs)
+            elif isinstance(v, (list, tuple)) and len(v) == bs:
+                sliced[k] = type(v)(v[start:end])
+            else:
+                sliced[k] = v
+        return sliced
     if isinstance(batch, (tuple, list)):
         # Detection-style (list_of_images, list_of_target_dicts)
         if (
@@ -72,12 +79,14 @@ def _slice_batch(batch: Any, start: int, end: int) -> Any:
             and len(batch[1]) > 0
             and isinstance(batch[1][0], dict)
         ):
-            return type(batch)([batch[0][start:end], batch[1][start:end]])
+            det_items = [batch[0][start:end], batch[1][start:end]]
+            return tuple(det_items) if isinstance(batch, tuple) else det_items
         # List of per-sample dicts
         if len(batch) > 0 and isinstance(batch[0], dict) and "input_ids" not in batch[0]:
             return batch[start:end]
         # Collated (inputs, targets) / [inputs, targets] from PyTorch default_collate
-        return type(batch)(_slice_batch(v, start, end) for v in batch)
+        items = [_slice_batch(v, start, end, batch_size=bs) for v in batch]
+        return tuple(items) if isinstance(batch, tuple) else items
     return batch
 
 
@@ -90,7 +99,7 @@ def split_batch_into_micro_batches(batch: Any, num_chunks: int) -> List[Any]:
     step = max(1, math.ceil(bs / num_chunks))
     for start in range(0, bs, step):
         end = min(bs, start + step)
-        chunks.append(_slice_batch(batch, start, end))
+        chunks.append(_slice_batch(batch, start, end, batch_size=bs))
     return chunks
 
 
@@ -223,7 +232,7 @@ class ExecutionPlanner:
         if amp_enabled and device.type != "cuda":
             act_per_sample_mb *= 0.6
 
-        available_act_mb = max(1.0, budget_mb - static_mb)
+        available_act_mb = max(0.0, budget_mb - static_mb)
         max_micro = max(1, int(available_act_mb // max(0.1, act_per_sample_mb)))
         micro_bs = min(max(1, target_batch_size), max_micro)
 

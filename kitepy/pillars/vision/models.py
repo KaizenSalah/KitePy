@@ -189,6 +189,9 @@ class CNN(_VisionMixin, BaseModel):
         config: Optional[Union[Dict, CNNConfig, str]] = None,
         **kwargs,
     ):
+        if isinstance(model, str):
+            from .wrappers import validate_vision_model_name
+            validate_vision_model_name(model)
         super().__init__(model, config, **kwargs)
 
     def _build_model(self):
@@ -220,6 +223,9 @@ class Transformer(_VisionMixin, BaseModel):
         config: Optional[Union[Dict, TransformerConfig, str]] = None,
         **kwargs,
     ):
+        if isinstance(model, str):
+            from .wrappers import validate_vision_model_name
+            validate_vision_model_name(model)
         super().__init__(model, config, **kwargs)
 
     def _build_model(self):

@@ -65,6 +65,31 @@ def test_engine_executes_planned_micro_batches_when_loader_exceeds_plan(tmp_path
     assert engine.global_step == 2  # Preserves 2 optimizer steps (1 per 8-sample batch)
 
 
+def test_recursive_nested_dict_slice_and_zero_budget_clamp():
+    from kitepy.core.planner import split_batch_into_micro_batches
+
+    nested = {
+        "x": torch.arange(8),
+        "meta": ["a", "b", "c", "d", "e", "f", "g", "h"],
+        "nested": {"mask": torch.ones(8, 4)},
+    }
+    chunks = split_batch_into_micro_batches(nested, num_chunks=4)
+    assert len(chunks) == 4
+    assert all(c["x"].shape == (2,) and c["nested"]["mask"].shape == (2, 4) and len(c["meta"]) == 2 for c in chunks)
+
+    # Budget < static model size must clamp micro_batch_size down to 1
+    plan = ExecutionPlanner().plan(
+        model=nn.Sequential(nn.Linear(64, 128), nn.Linear(128, 10)),
+        device=torch.device("cpu"),
+        target_batch_size=32,
+        sample_batch=(torch.randn(32, 64), torch.randint(0, 10, (32,))),
+        adapter=ClassificationAdapter(),
+        criterion=nn.CrossEntropyLoss(),
+        memory_budget_mb=0.001,
+    )
+    assert plan.micro_batch_size == 1
+
+
 def test_engine_runtime_oom_microbatch_recovery(tmp_path):
     """Simulate CUDA/runtime OOM on batch > 2 and verify Engine automatically splits & recovers."""
 

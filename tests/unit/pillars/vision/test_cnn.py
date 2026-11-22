@@ -107,9 +107,8 @@ def test_cnn_custom_model_and_errors():
     assert m.is_trained
     assert isinstance(m.unwrap(), nn.Module)
 
-    with pytest.raises(ValueError):
-        bad = CNN("nonexistent_model_xyz")
-        bad._build_model()
+    with pytest.raises(ValueError, match="Unknown vision model"):
+        CNN("nonexistent_model_xyz")
 
 
 def test_all_vision_presets_exist_in_timm():

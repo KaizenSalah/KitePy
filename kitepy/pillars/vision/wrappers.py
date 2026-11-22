@@ -38,6 +38,25 @@ TIMM_NAME_MAPPING = {
 }
 
 
+def validate_vision_model_name(user_name: str) -> None:
+    """Validate that a vision model name exists in KitePy presets or timm, raising a helpful typo hint."""
+    from kitepy.core.presets import CNN_PRESETS, TRANSFORMER_PRESETS
+    if user_name in CNN_PRESETS or user_name in TRANSFORMER_PRESETS or user_name in TIMM_NAME_MAPPING:
+        return
+    try:
+        import timm
+        avail = set(timm.list_models())
+        if user_name in avail:
+            return
+        from difflib import get_close_matches
+        pool = list(CNN_PRESETS.keys()) + list(TRANSFORMER_PRESETS.keys()) + list(avail)
+        hints = get_close_matches(user_name, pool, n=3, cutoff=0.55)
+        hint_msg = f" Did you mean one of: {hints}?" if hints else ""
+        raise ValueError(f"Unknown vision model '{user_name}'.{hint_msg}")
+    except ImportError:
+        return
+
+
 def resolve_model_name(user_name: str) -> str:
     """Resolve user-friendly name to actual timm model name."""
     if user_name in TIMM_NAME_MAPPING:
