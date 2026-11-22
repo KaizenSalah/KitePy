@@ -257,15 +257,20 @@ class LLM(BaseModel):
         print(f"✓ Created LLM model: {self.model_name} ({sum(p.numel() for p in self.model.parameters()):,} params)")
 
     def _preprocess_input(self, input_data: Any) -> Any:
-        if isinstance(input_data, (torch.Tensor, dict)):
+        from collections.abc import Mapping
+        if isinstance(input_data, torch.Tensor):
             return input_data
+        if isinstance(input_data, Mapping):
+            return dict(input_data)
         tok = self._ensure_tokenizer()
-        return tok(
-            input_data,
-            max_length=self.config.context_length,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
+        return dict(
+            tok(
+                input_data,
+                max_length=self.config.context_length,
+                padding=True,
+                truncation=True,
+                return_tensors="pt",
+            )
         )
 
     @torch.no_grad()

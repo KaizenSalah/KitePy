@@ -466,9 +466,11 @@ class BaseModel:
         if isinstance(prepared, torch.Tensor) and prepared.ndim >= 2:
             self.last_input_shape = tuple(prepared.shape[1:])
 
+        from collections.abc import Mapping
+
         with torch.no_grad():
-            if isinstance(prepared, dict):
-                out = self.model(**prepared)
+            if isinstance(prepared, Mapping):
+                out = self.model(**dict(prepared))
                 logits = getattr(out, "logits", out)
             else:
                 logits = self.model(prepared)

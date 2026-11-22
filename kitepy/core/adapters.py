@@ -6,6 +6,7 @@ Decouples the universal Engine & BaseModel from any specific modality or task.
 - Power users can override `forward_and_loss` or `compute_batch_metrics` for custom research.
 """
 
+from collections.abc import Mapping
 import math
 from typing import Any, Callable, Dict, Optional, Tuple
 import torch
@@ -18,10 +19,10 @@ import torch.nn.functional as F
 # ============================================================================
 
 def move_to_device(obj: Any, device: torch.device) -> Any:
-    """Recursively move tensors in tuples, lists, or dicts to target device."""
+    """Recursively move tensors in tuples, lists, or mappings (dict / HF BatchEncoding) to device."""
     if isinstance(obj, torch.Tensor):
         return obj.to(device)
-    if isinstance(obj, dict):
+    if isinstance(obj, Mapping):
         return {k: move_to_device(v, device) for k, v in obj.items()}
     if isinstance(obj, tuple):
         return tuple(move_to_device(v, device) for v in obj)
@@ -31,10 +32,10 @@ def move_to_device(obj: Any, device: torch.device) -> Any:
 
 
 def infer_batch_size(batch: Any) -> int:
-    """Infer batch size from a tensor, tuple/list, or dict batch."""
+    """Infer batch size from a tensor, tuple/list, or mapping batch."""
     if isinstance(batch, torch.Tensor):
         return batch.size(0)
-    if isinstance(batch, dict):
+    if isinstance(batch, Mapping):
         for v in batch.values():
             if isinstance(v, torch.Tensor) and v.ndim > 0:
                 return v.size(0)

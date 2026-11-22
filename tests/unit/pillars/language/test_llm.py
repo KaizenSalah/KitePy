@@ -57,6 +57,13 @@ def test_text_classifier(tmp_path):
     batch_preds = clf.predict(["short", "much longer sequence with many more tokens"], top_k=2)
     assert len(batch_preds) == 2 and all(len(row) == 2 for row in batch_preds)
 
+    # Simulate HF BatchEncoding (UserDict / Mapping, NOT builtin dict) returned by AutoTokenizer
+    from collections import UserDict
+    orig_tok = clf.tokenizer
+    clf.tokenizer = lambda *a, **kw: UserDict(orig_tok(*a, **kw))
+    be_preds = clf.predict(["batch encoding test"], top_k=2)
+    assert isinstance(be_preds, list) and len(be_preds) == 1 and len(be_preds[0]) == 2
+
 
 def test_hf_causal_lm_jsonl_instruction_finetune_offline(tmp_path):
     """End-to-end test of the JSONL ChatML/Alpaca + tokenizer propagation + LoRA + HF generate() pipeline."""
