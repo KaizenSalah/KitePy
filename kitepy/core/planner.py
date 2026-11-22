@@ -103,6 +103,31 @@ def split_batch_into_micro_batches(batch: Any, num_chunks: int) -> List[Any]:
     return chunks
 
 
+class _SingletonBatchNormGuard:
+    """Temporarily switch active BatchNorm layers to eval() during bs==1 forward passes."""
+
+    _BN_TYPES = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d, nn.SyncBatchNorm)
+
+    def __init__(self, model: nn.Module, batch_size: int):
+        self.model = model
+        self.active = batch_size <= 1
+        self._switched: List[nn.Module] = []
+
+    def __enter__(self):
+        if self.active:
+            for mod in self.model.modules():
+                if isinstance(mod, self._BN_TYPES) and mod.training:
+                    mod.eval()
+                    self._switched.append(mod)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        for mod in self._switched:
+            mod.train()
+        self._switched.clear()
+        return False
+
+
 class ExecutionPlanner:
     """
     Constraint-aware pre-flight execution planner.
@@ -151,8 +176,9 @@ class ExecutionPlanner:
                 model.train()
 
                 # Warm up cuDNN / allocator once before measuring delta
-                with torch.amp.autocast("cuda", dtype=ac_dtype, enabled=amp_enabled):
-                    warm_loss, _, _ = adapter.forward_and_loss(model, prep, criterion, engine=None)
+                with _SingletonBatchNormGuard(model, 1):
+                    with torch.amp.autocast("cuda", dtype=ac_dtype, enabled=amp_enabled):
+                        warm_loss, _, _ = adapter.forward_and_loss(model, prep, criterion, engine=None)
                 warm_loss.backward()
                 model.zero_grad(set_to_none=True)
                 torch.cuda.synchronize(device)
@@ -160,8 +186,9 @@ class ExecutionPlanner:
 
                 torch.cuda.reset_peak_memory_stats(device)
                 base_mem = torch.cuda.memory_allocated(device)
-                with torch.amp.autocast("cuda", dtype=ac_dtype, enabled=amp_enabled):
-                    loss, _, _ = adapter.forward_and_loss(model, prep, criterion, engine=None)
+                with _SingletonBatchNormGuard(model, 1):
+                    with torch.amp.autocast("cuda", dtype=ac_dtype, enabled=amp_enabled):
+                        loss, _, _ = adapter.forward_and_loss(model, prep, criterion, engine=None)
                 loss.backward()
                 torch.cuda.synchronize(device)
                 peak = torch.cuda.max_memory_allocated(device)

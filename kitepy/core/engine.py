@@ -35,7 +35,13 @@ from .callbacks import (
 from .config import TrainingConfig
 from .logging import get_logger
 from .lr_finder import LRFinder
-from .planner import ExecutionPlan, ExecutionPlanner, RuntimeGuard, split_batch_into_micro_batches
+from .planner import (
+    ExecutionPlan,
+    ExecutionPlanner,
+    RuntimeGuard,
+    _SingletonBatchNormGuard,
+    split_batch_into_micro_batches,
+)
 from .serialization import atomic_torch_save, get_lineage_metadata
 from .utils import (
     ModelEMA,
@@ -840,11 +846,13 @@ class Engine:
                 effective_div = accum_steps * len(sub_batches)
 
                 for sb in sub_batches:
+                    sb_size = infer_batch_size(sb)
                     if self.accelerator is not None:
                         with self.accelerator.accumulate(self.model):
-                            loss, outputs, targets = self.adapter.forward_and_loss(
-                                self.model, sb, self.criterion, engine=self
-                            )
+                            with _SingletonBatchNormGuard(self.model, sb_size):
+                                loss, outputs, targets = self.adapter.forward_and_loss(
+                                    self.model, sb, self.criterion, engine=self
+                                )
                             if self.guard.auto_recover and not self.guard.check_finite_loss(loss):
                                 self.optimizer.zero_grad(set_to_none=True)
                                 return 0.0, outputs, targets, False
@@ -855,9 +863,10 @@ class Engine:
                             dtype=self.amp_dtype,
                             enabled=self.amp_enabled,
                         ):
-                            loss, outputs, targets = self.adapter.forward_and_loss(
-                                self.model, sb, self.criterion, engine=self
-                            )
+                            with _SingletonBatchNormGuard(self.model, sb_size):
+                                loss, outputs, targets = self.adapter.forward_and_loss(
+                                    self.model, sb, self.criterion, engine=self
+                                )
                         if self.guard.auto_recover and not self.guard.check_finite_loss(loss):
                             self.optimizer.zero_grad(set_to_none=True)
                             return 0.0, outputs, targets, False

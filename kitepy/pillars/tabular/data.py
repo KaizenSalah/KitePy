@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, TensorDataset, random_split
+from torch.utils.data import DataLoader, Dataset, TensorDataset, random_split
 
 from kitepy.core.config import DataConfig, TrainingConfig
 
@@ -50,13 +50,15 @@ def load_tabular_data(
             raise ImportError("pandas required for CSV loading. Install with: pip install pandas")
         df = pd.read_csv(dataset_name)
         target_col = df.columns[-1]
+        df = df.dropna(subset=[target_col])
         y_series = df[target_col]
-        X_df = pd.get_dummies(df.drop(columns=[target_col]), drop_first=False).astype(np.float32)
-        # Standardize features
-        vals = X_df.values
+        X_df = pd.get_dummies(df.drop(columns=[target_col]), drop_first=False)
+        X_df = X_df.fillna(X_df.median(numeric_only=True)).fillna(0.0).astype(np.float32)
+        # Standardize features safely (NaN-free)
+        vals = np.nan_to_num(X_df.values, nan=0.0, posinf=0.0, neginf=0.0)
         mean = vals.mean(axis=0, keepdims=True)
         std = np.where(vals.std(axis=0, keepdims=True) < 1e-6, 1.0, vals.std(axis=0, keepdims=True))
-        X = torch.tensor((vals - mean) / std, dtype=torch.float32)
+        X = torch.tensor(np.nan_to_num((vals - mean) / std, nan=0.0), dtype=torch.float32)
         if task == "regression":
             y = torch.tensor(y_series.values, dtype=torch.float32)
         else:
@@ -71,6 +73,8 @@ def load_tabular_data(
 
     val_frac = data_config.val_split if isinstance(data_config.val_split, float) else 0.2
     val_len = max(1, int(len(ds) * val_frac)) if len(ds) >= 5 and val_frac > 0 else 0
+    train_ds: Dataset
+    val_ds: Optional[Dataset]
     if val_len > 0:
         train_ds, val_ds = random_split(
             ds, [len(ds) - val_len, val_len],
