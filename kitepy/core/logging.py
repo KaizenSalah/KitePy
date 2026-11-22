@@ -31,6 +31,11 @@ class _RankZeroFilter(logging.Filter):
         return _get_global_rank() == 0
 
 
+class _ConsoleRankZeroFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return _get_global_rank() == 0 and not getattr(record, "structured_only", False)
+
+
 class _JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: Dict[str, Any] = {
@@ -67,7 +72,7 @@ def get_logger(
     if not root_logger.handlers:
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(logging.Formatter("%(message)s"))
-        stream_handler.addFilter(_RankZeroFilter())
+        stream_handler.addFilter(_ConsoleRankZeroFilter())
         root_logger.addHandler(stream_handler)
         root_logger.propagate = False
 

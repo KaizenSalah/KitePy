@@ -814,19 +814,21 @@ class BaseModel:
 
         if format == "onnx":
             try:
+                import inspect
                 cpu_model = self.model.cpu()
                 dummy_input = torch.randn(*shape)
-                torch.onnx.export(
-                    cpu_model,
-                    dummy_input,
-                    path,
-                    export_params=True,
-                    opset_version=14,
-                    do_constant_folding=True,
-                    input_names=["input"],
-                    output_names=["output"],
-                    dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
-                )
+                onnx_kwargs = {
+                    "export_params": True,
+                    "opset_version": 14,
+                    "do_constant_folding": True,
+                    "input_names": ["input"],
+                    "output_names": ["output"],
+                    "dynamic_axes": {"input": {0: "batch_size"}, "output": {0: "batch_size"}},
+                }
+                # PyTorch 2.10+ defaults to dynamo=True requiring onnxscript; use legacy exporter for zero-extra-dep reliability
+                if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+                    onnx_kwargs["dynamo"] = False
+                torch.onnx.export(cpu_model, dummy_input, path, **onnx_kwargs)
                 print(f"✓ Exported to ONNX: {path}")
             except Exception as e:
                 print(f"⚠️  ONNX export failed: {e}")

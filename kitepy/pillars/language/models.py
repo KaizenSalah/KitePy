@@ -260,7 +260,13 @@ class LLM(BaseModel):
         if isinstance(input_data, (torch.Tensor, dict)):
             return input_data
         tok = self._ensure_tokenizer()
-        return tok(input_data, max_length=self.config.context_length, truncation=True, return_tensors="pt")
+        return tok(
+            input_data,
+            max_length=self.config.context_length,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        )
 
     @torch.no_grad()
     def generate(self, prompt: str, max_new_tokens: int = 32, temperature: float = 0.7) -> str:

@@ -622,7 +622,10 @@ class Engine:
                     if callable(grad_ckpt_fn):
                         grad_ckpt_fn()
 
-                self.logger.info("execution_plan", extra={"metrics": self.execution_plan.to_dict()})
+                self.logger.info(
+                    "execution_plan",
+                    extra={"metrics": self.execution_plan.to_dict(), "structured_only": True},
+                )
             except StopIteration:
                 pass
 
@@ -649,7 +652,10 @@ class Engine:
         self.callbacks.on_train_start(self)
         self.logger.info(
             "train_start",
-            extra={"metrics": {"epochs": self.config.epochs, "amp_enabled": self.amp_enabled, "amp_dtype": str(self.amp_dtype)}},
+            extra={
+                "metrics": {"epochs": self.config.epochs, "amp_enabled": self.amp_enabled, "amp_dtype": str(self.amp_dtype)},
+                "structured_only": True,
+            },
         )
 
         max_epochs = self.config.epochs
@@ -721,7 +727,10 @@ class Engine:
             )
 
             self.callbacks.on_epoch_end(self, epoch, history_entry)
-            self.logger.info(f"epoch_{epoch}_end", extra={"metrics": history_entry})
+            self.logger.info(
+                f"epoch_{epoch}_end",
+                extra={"metrics": history_entry, "structured_only": True},
+            )
 
             if self.config.save_every_n_epochs and epoch % self.config.save_every_n_epochs == 0:
                 if self.accelerator is None or self.accelerator.is_main_process:
@@ -762,7 +771,7 @@ class Engine:
             "global_step": self.global_step,
             "best_val_loss": self.best_val_loss if self.best_val_loss != float("inf") else None,
         }
-        self.logger.info("train_end", extra={"metrics": self.execution_report})
+        self.logger.info("train_end", extra={"metrics": self.execution_report, "structured_only": True})
 
         return self.model, self.history
 
@@ -786,21 +795,27 @@ class Engine:
             else:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
 
+        did_step = True
         if self.scaler is not None:
+            scale_before = self.scaler.get_scale()
             self.scaler.step(self.optimizer)
             self.scaler.update()
+            # If GradScaler skipped optimizer.step() due to inf/nan overflow, scale decreased;
+            # do not advance scheduler/EMA on skipped steps.
+            did_step = self.scaler.get_scale() >= scale_before
         else:
             self.optimizer.step()
 
         self.optimizer.zero_grad(set_to_none=True)
 
-        if self.ema is not None:
-            self.ema.update(self.model)
+        if did_step:
+            if self.ema is not None:
+                self.ema.update(self.model)
 
-        if self.scheduler is not None and self._scheduler_mode == "step":
-            self.scheduler.step()
+            if self.scheduler is not None and self._scheduler_mode == "step":
+                self.scheduler.step()
 
-        self.global_step += 1
+            self.global_step += 1
 
     def _forward_backward_micro_batch(
         self,

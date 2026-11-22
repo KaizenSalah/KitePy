@@ -54,6 +54,9 @@ def test_text_classifier(tmp_path):
     preds = clf.predict("this framework is awesome", top_k=2)
     assert len(preds) == 2
 
+    batch_preds = clf.predict(["short", "much longer sequence with many more tokens"], top_k=2)
+    assert len(batch_preds) == 2 and all(len(row) == 2 for row in batch_preds)
+
 
 def test_hf_causal_lm_jsonl_instruction_finetune_offline(tmp_path):
     """End-to-end test of the JSONL ChatML/Alpaca + tokenizer propagation + LoRA + HF generate() pipeline."""
