@@ -65,47 +65,58 @@ class LRFinder:
 
         print(f"\n🔍 Running LR Finder ({num_steps} steps)...")
         iterator = iter(train_loader)
+        try:
+            first_batch = next(iterator)
+        except StopIteration as e:
+            raise ValueError("Training DataLoader is empty (0 batches). Cannot run LRFinder.") from e
 
-        for i, lr in enumerate(lr_schedule):
-            for param_group in self.optimizer.param_groups:
-                param_group["lr"] = float(lr)
+        try:
+            for i, lr in enumerate(lr_schedule):
+                for param_group in self.optimizer.param_groups:
+                    param_group["lr"] = float(lr)
 
-            try:
-                raw_batch = next(iterator)
-            except StopIteration:
-                iterator = iter(train_loader)
-                raw_batch = next(iterator)
+                if i == 0:
+                    raw_batch = first_batch
+                else:
+                    try:
+                        raw_batch = next(iterator)
+                    except StopIteration:
+                        iterator = iter(train_loader)
+                        try:
+                            raw_batch = next(iterator)
+                        except StopIteration as e:
+                            raise ValueError("Training DataLoader became empty during LRFinder.") from e
 
-            batch = self.adapter.prepare_batch(raw_batch, self.device)
+                batch = self.adapter.prepare_batch(raw_batch, self.device)
 
-            self.optimizer.zero_grad()
-            loss, _, _ = self.adapter.forward_and_loss(
-                self.model, batch, self.criterion, engine=None
-            )
+                self.optimizer.zero_grad()
+                loss, _, _ = self.adapter.forward_and_loss(
+                    self.model, batch, self.criterion, engine=None
+                )
 
-            loss_val = float(loss.item())
-            avg_loss = beta * avg_loss + (1 - beta) * loss_val
-            smoothed_loss = avg_loss / (1 - beta ** (i + 1))
+                loss_val = float(loss.item())
+                avg_loss = beta * avg_loss + (1 - beta) * loss_val
+                smoothed_loss = avg_loss / (1 - beta ** (i + 1))
 
-            self.lrs.append(float(lr))
-            self.losses.append(float(smoothed_loss))
+                self.lrs.append(float(lr))
+                self.losses.append(float(smoothed_loss))
 
-            if i > 10 and (smoothed_loss > 4 * best_loss or np.isnan(smoothed_loss)):
-                print(f"  Stopping early at step {i} (loss diverged)")
-                break
+                if i > 10 and (smoothed_loss > 4 * best_loss or np.isnan(smoothed_loss)):
+                    print(f"  Stopping early at step {i} (loss diverged)")
+                    break
 
-            if smoothed_loss < best_loss:
-                best_loss = smoothed_loss
+                if smoothed_loss < best_loss:
+                    best_loss = smoothed_loss
 
-            loss.backward()
-            self.optimizer.step()
+                loss.backward()
+                self.optimizer.step()
 
-            if (i + 1) % 20 == 0:
-                print(f"  Step {i + 1}/{num_steps} | LR: {lr:.2e} | Loss: {smoothed_loss:.4f}")
-
-        # Restore original weights & optimizer state
-        self.model.load_state_dict(self.model_state)
-        self.optimizer.load_state_dict(self.optimizer_state)
+                if (i + 1) % 20 == 0:
+                    print(f"  Step {i + 1}/{num_steps} | LR: {lr:.2e} | Loss: {smoothed_loss:.4f}")
+        finally:
+            # Always restore original weights & optimizer state even on interruption/error
+            self.model.load_state_dict(self.model_state)
+            self.optimizer.load_state_dict(self.optimizer_state)
 
         print("✓ LR Finder complete")
         return self.lrs, self.losses

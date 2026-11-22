@@ -57,8 +57,12 @@ def _load_wav_waveform(path: Path, target_samples: int = 16000) -> torch.Tensor:
 
 def waveform_to_spectrogram(wav: torch.Tensor, n_mels: int = 64, num_frames: int = 128) -> torch.Tensor:
     """Convert 1D waveform into fixed-shape log-STFT spectrogram tensor (1, n_mels, num_frames)."""
+    if wav.numel() == 0:
+        raise ValueError("Audio waveform cannot be empty (0 samples).")
     if wav.ndim > 1:
         wav = wav.mean(dim=0)
+    if wav.size(-1) < 256:
+        wav = F.pad(wav, (0, 256 - wav.size(-1)))
     window = torch.hann_window(256, device=wav.device)
     stft = torch.stft(wav, n_fft=256, hop_length=128, window=window, return_complex=True)
     spec = torch.log1p(stft.abs()).unsqueeze(0).unsqueeze(0)  # (1, 1, F, T)

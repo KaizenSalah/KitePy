@@ -144,6 +144,10 @@ class _VisionMixin:
                 return get_val_transforms(img_size, grayscale=(in_channels == 1))(img)
             return torch.from_numpy(arr).float()
 
+        if isinstance(item, (list, tuple)):
+            t = torch.as_tensor(item, dtype=torch.float32)
+            return t
+
         raise TypeError(f"Unsupported input type for vision prediction: {type(item)}")
 
     def _preprocess_input(self, input_data: Any) -> torch.Tensor:
@@ -167,6 +171,9 @@ class _VisionMixin:
             return torch.from_numpy(input_data).float()
 
         if isinstance(input_data, list):
+            if input_data and isinstance(input_data[0], (int, float, list, tuple)):
+                t = torch.as_tensor(input_data, dtype=torch.float32)
+                return t.unsqueeze(0) if t.ndim == 3 else t
             tensors = [self._preprocess_single_image(item, img_size, in_channels) for item in input_data]
             return torch.stack(tensors, dim=0)
 

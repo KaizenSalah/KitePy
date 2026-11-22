@@ -7,6 +7,7 @@ Decouples the universal Engine & BaseModel from any specific modality or task.
 """
 
 from collections.abc import Mapping
+import inspect
 import math
 from typing import Any, Callable, Dict, Optional, Tuple, Type, cast
 import torch
@@ -64,7 +65,7 @@ class TaskAdapter:
 
     def unpack_batch(self, batch: Any) -> Tuple[Any, Any]:
         """Split batch into (inputs, targets) when applicable."""
-        if isinstance(batch, dict):
+        if isinstance(batch, Mapping):
             targets = batch.get("labels", batch.get("target"))
             return batch, targets
         if isinstance(batch, (tuple, list)) and len(batch) >= 2:
@@ -80,8 +81,8 @@ class TaskAdapter:
     ) -> Tuple[torch.Tensor, Any, Any]:
         """Run forward pass and compute loss. Returns (loss, outputs, targets)."""
         inputs, targets = self.unpack_batch(batch)
-        if isinstance(inputs, dict):
-            outputs = model(**inputs)
+        if isinstance(inputs, Mapping):
+            outputs = model(**dict(inputs))
             if hasattr(outputs, "loss") and outputs.loss is not None:
                 loss = outputs.loss
                 logits = getattr(outputs, "logits", outputs)
@@ -112,8 +113,8 @@ class TaskAdapter:
     def predict_step(self, model: nn.Module, inputs: Any, device: torch.device) -> Any:
         """Run inference on prepared inputs."""
         prepared = move_to_device(inputs, device)
-        if isinstance(prepared, dict):
-            out = model(**prepared)
+        if isinstance(prepared, Mapping):
+            out = model(**dict(prepared))
             return getattr(out, "logits", out)
         return model(prepared)
 
@@ -156,7 +157,7 @@ class BinaryClassificationAdapter(TaskAdapter):
 
     def forward_and_loss(self, model, batch, criterion, engine=None):
         inputs, targets = self.unpack_batch(batch)
-        outputs = model(**inputs) if isinstance(inputs, dict) else model(inputs)
+        outputs = model(**dict(inputs)) if isinstance(inputs, Mapping) else model(inputs)
         logits = getattr(outputs, "logits", outputs)
         logits_flat = logits.view(-1)
         targets_float = targets.float().view(-1)
@@ -212,7 +213,7 @@ class RegressionAdapter(TaskAdapter):
 
     def forward_and_loss(self, model, batch, criterion, engine=None):
         inputs, targets = self.unpack_batch(batch)
-        outputs = model(**inputs) if isinstance(inputs, dict) else model(inputs)
+        outputs = model(**dict(inputs)) if isinstance(inputs, Mapping) else model(inputs)
         preds = getattr(outputs, "logits", outputs)
         targets_f = targets.float()
         if preds.ndim == 2 and preds.size(1) == 1 and targets_f.ndim == 1:
@@ -236,6 +237,16 @@ class RegressionAdapter(TaskAdapter):
         }
 
 
+def _accepts_keyword_input(model: nn.Module, key: str = "input_ids") -> bool:
+    """Check whether model.forward accepts named keyword arguments (e.g., input_ids / **kwargs)."""
+    try:
+        sig = inspect.signature(model.forward)
+    except (ValueError, TypeError):
+        return True
+    params = sig.parameters
+    return key in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
 class CausalLMAdapter(TaskAdapter):
     """Autoregressive causal language modeling (tracks loss & perplexity)."""
 
@@ -243,17 +254,25 @@ class CausalLMAdapter(TaskAdapter):
     primary_metric = "perplexity"
 
     def forward_and_loss(self, model, batch, criterion, engine=None):
-        if isinstance(batch, dict):
-            outputs = model(**batch)
-            if hasattr(outputs, "loss") and outputs.loss is not None:
-                logits = getattr(outputs, "logits", outputs)
-                return outputs.loss, logits, batch.get("labels")
+        if isinstance(batch, Mapping):
+            batch_dict = dict(batch)
+            labels = batch_dict.get("labels", batch_dict.get("input_ids"))
+            if _accepts_keyword_input(model, "input_ids"):
+                outputs = model(**batch_dict)
+            else:
+                outputs = model(batch_dict["input_ids"])
             logits = getattr(outputs, "logits", outputs)
-            labels = batch.get("labels", batch.get("input_ids"))
+            if hasattr(outputs, "loss") and outputs.loss is not None:
+                if labels is not None and (labels.size(1) <= 1 or not bool((labels[..., 1:] != -100).any().item())):
+                    return logits.sum() * 0.0, logits, labels
+                return outputs.loss, logits, labels
         else:
             inputs, labels = self.unpack_batch(batch)
             outputs = model(inputs)
             logits = getattr(outputs, "logits", outputs)
+
+        if logits.ndim < 2 or logits.size(1) <= 1 or (labels is not None and labels.size(1) <= 1):
+            return logits.sum() * 0.0, logits, labels
 
         # Standard next-token shift (align sequence length if model clamped context)
         if logits.size(1) != labels.size(1):
@@ -262,6 +281,10 @@ class CausalLMAdapter(TaskAdapter):
             labels = labels[:, :min_t]
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
+
+        if shift_labels.numel() == 0 or not bool((shift_labels != -100).any().item()):
+            return logits.sum() * 0.0, logits, labels
+
         loss = F.cross_entropy(
             shift_logits.view(-1, shift_logits.size(-1)),
             shift_labels.view(-1),
@@ -280,16 +303,20 @@ class CausalLMAdapter(TaskAdapter):
 
 
 class SequenceClassificationAdapter(ClassificationAdapter):
-    """Text sequence classification supporting dict batches from HuggingFace tokenizers."""
+    """Text sequence classification supporting dict/Mapping batches from HuggingFace tokenizers."""
 
     task_name = "sequence_classification"
     primary_metric = "acc"
 
     def forward_and_loss(self, model, batch, criterion, engine=None):
-        if isinstance(batch, dict):
-            labels = batch.get("labels")
-            model_inputs = {k: v for k, v in batch.items() if k != "labels"}
-            outputs = model(**batch) if "labels" in batch and hasattr(model, "config") else model(**model_inputs)
+        if isinstance(batch, Mapping):
+            batch_dict = dict(batch)
+            labels = batch_dict.get("labels")
+            model_inputs = {k: v for k, v in batch_dict.items() if k != "labels"}
+            if _accepts_keyword_input(model, "input_ids"):
+                outputs = model(**batch_dict) if "labels" in batch_dict and hasattr(model, "config") else model(**model_inputs)
+            else:
+                outputs = model(batch_dict["input_ids"])
             if hasattr(outputs, "loss") and outputs.loss is not None:
                 return outputs.loss, getattr(outputs, "logits", outputs), labels
             logits = getattr(outputs, "logits", outputs)
@@ -305,14 +332,14 @@ class ContrastiveAdapter(TaskAdapter):
     primary_metric = "acc"
 
     def forward_and_loss(self, model, batch, criterion, engine=None):
-        if isinstance(batch, dict):
-            outputs = model(**batch)
+        if isinstance(batch, Mapping):
+            outputs = model(**dict(batch))
         elif isinstance(batch, (tuple, list)) and len(batch) >= 2:
             outputs = model(batch[0], batch[1])
         else:
             outputs = model(batch)
 
-        if isinstance(outputs, dict):
+        if isinstance(outputs, Mapping):
             logits_i = outputs["logits_per_image"]
             logits_t = outputs["logits_per_text"]
         elif isinstance(outputs, tuple) and len(outputs) == 2:
@@ -342,7 +369,7 @@ class GenerativeAdapter(TaskAdapter):
 
     def forward_and_loss(self, model, batch, criterion, engine=None):
         x = batch[0] if isinstance(batch, (tuple, list)) else batch
-        if isinstance(x, dict):
+        if isinstance(x, Mapping):
             x = x.get("pixel_values", x.get("image", next(iter(x.values()))))
 
         if hasattr(model, "compute_loss"):
@@ -433,7 +460,7 @@ class DetectionAdapter(TaskAdapter):
         images, targets = self.unpack_batch(batch)
         if isinstance(images, torch.Tensor):
             images = list(images)
-        if isinstance(targets, dict):
+        if isinstance(targets, Mapping):
             # Collate dict of batched tensors -> list of target dicts
             b = len(images)
             targets = [{k: v[i] for k, v in targets.items()} for i in range(b)]

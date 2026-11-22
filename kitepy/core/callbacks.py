@@ -102,6 +102,7 @@ class ModelCheckpoint(Callback):
         self.mode = mode
         self.best_value = float("inf") if mode == "min" else float("-inf")
         self.saved_checkpoints: List[str] = []
+        self._checkpoint_scores: Dict[str, float] = {}
 
     def on_epoch_end(self, trainer, epoch, metrics, **kwargs):
         current = metrics.get(self.monitor)
@@ -110,15 +111,12 @@ class ModelCheckpoint(Callback):
         if current is None:
             return
 
+        score = float(current)
         if self.save_best_only:
-            if self.mode == "min":
-                improved = current < self.best_value
-            else:
-                improved = current > self.best_value
-
+            improved = score < self.best_value if self.mode == "min" else score > self.best_value
             if not improved:
                 return
-            self.best_value = current
+            self.best_value = score
 
         val_loss_val = metrics.get("val_loss")
         train_loss_val = metrics.get("train_loss")
@@ -128,22 +126,50 @@ class ModelCheckpoint(Callback):
             train_loss=train_loss_val if train_loss_val is not None else 0.0,
         )
 
+        # If pool of distinct top-k checkpoints is already full and this new file isn't better than the worst kept, skip saving
+        if (
+            self.save_top_k is not None
+            and self.save_top_k > 0
+            and path not in self.saved_checkpoints
+            and len(self.saved_checkpoints) >= self.save_top_k
+        ):
+            worst_existing = max(
+                self.saved_checkpoints,
+                key=lambda p: self._checkpoint_scores[p] if self.mode == "min" else -self._checkpoint_scores[p],
+            )
+            worst_score = self._checkpoint_scores[worst_existing]
+            if not (score < worst_score if self.mode == "min" else score > worst_score):
+                return
+
         Path(path).parent.mkdir(parents=True, exist_ok=True)
 
         checkpoint = {
             "epoch": epoch,
+            "global_step": getattr(trainer, "global_step", 0),
+            "best_val_loss": getattr(trainer, "best_val_loss", float("inf")),
             "model_state_dict": trainer.model.state_dict(),
             "optimizer_state_dict": trainer.optimizer.state_dict(),
             "metrics": metrics,
+            "history": getattr(trainer, "history", []),
         }
         torch.save(checkpoint, path)
+        if path in self.saved_checkpoints:
+            self.saved_checkpoints.remove(path)
         self.saved_checkpoints.append(path)
+        self._checkpoint_scores[path] = score
         print(f"  → Checkpoint saved: {path}")
 
-        if len(self.saved_checkpoints) > self.save_top_k:
-            old_path = self.saved_checkpoints.pop(0)
-            if Path(old_path).exists():
-                Path(old_path).unlink()
+        if self.save_top_k is not None and self.save_top_k > 0 and len(self.saved_checkpoints) > self.save_top_k:
+            candidates = [p for p in self.saved_checkpoints if p != path]
+            if candidates:
+                worst_path = max(
+                    candidates,
+                    key=lambda p: self._checkpoint_scores.get(p, score) if self.mode == "min" else -self._checkpoint_scores.get(p, score),
+                )
+                self.saved_checkpoints.remove(worst_path)
+                self._checkpoint_scores.pop(worst_path, None)
+                if Path(worst_path).exists():
+                    Path(worst_path).unlink()
 
 
 class LRMonitor(Callback):
@@ -184,26 +210,40 @@ class CSVLogger(Callback):
         self.log_dir = Path(log_dir)
         self.filepath = self.log_dir / filename
         self._fieldnames: Optional[List[str]] = None
+        self._rows: List[Dict[str, Any]] = []
 
     def on_train_start(self, trainer, **kwargs):
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._fieldnames = None
+        self._rows = []
 
     def on_epoch_end(self, trainer, epoch, metrics, **kwargs):
-        row = {"epoch": epoch}
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        row: Dict[str, Any] = {"epoch": epoch}
         for k, v in metrics.items():
             if v is not None:
                 row[k] = v
 
-        write_header = not self.filepath.exists() or self._fieldnames is None
+        self._rows.append(row)
         if self._fieldnames is None:
             self._fieldnames = list(row.keys())
-
-        with open(self.filepath, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=self._fieldnames, extrasaction="ignore")
-            if write_header:
+            with open(self.filepath, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=self._fieldnames, restval="", extrasaction="ignore")
                 writer.writeheader()
-            writer.writerow(row)
+                writer.writerow(row)
+            return
+
+        new_cols = [k for k in row.keys() if k not in self._fieldnames]
+        if new_cols:
+            self._fieldnames.extend(new_cols)
+            with open(self.filepath, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=self._fieldnames, restval="", extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(self._rows)
+        else:
+            with open(self.filepath, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=self._fieldnames, restval="", extrasaction="ignore")
+                writer.writerow(row)
 
 
 class WandbLogger(Callback):

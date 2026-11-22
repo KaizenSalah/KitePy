@@ -308,9 +308,12 @@ class LLM(BaseModel):
             ctx = ids[:, -self.config.context_length :]
             logits = self.model(ctx)
             logits = getattr(logits, "logits", logits)
-            next_logits = logits[:, -1, :] / max(1e-5, temperature)
-            probs = torch.softmax(next_logits, dim=-1)
-            next_id = torch.multinomial(probs, num_samples=1)
+            if temperature <= 0:
+                next_id = logits[:, -1, :].argmax(dim=-1, keepdim=True)
+            else:
+                next_logits = logits[:, -1, :] / temperature
+                probs = torch.softmax(next_logits, dim=-1)
+                next_id = torch.multinomial(probs, num_samples=1)
             ids = torch.cat([ids, next_id], dim=1)
             if next_id.item() == eos_id:
                 break

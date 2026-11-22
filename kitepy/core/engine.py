@@ -150,6 +150,51 @@ def _compute_balanced_class_weights(train_loader: DataLoader, device: torch.devi
     return weights.to(device)
 
 
+def create_loss_function(
+    loss: Any = "cross_entropy",
+    class_weights: Optional[Any] = None,
+    label_smoothing: float = 0.0,
+    device: Optional[torch.device] = None,
+) -> nn.Module:
+    """Resolve a PyTorch loss function from string name, nn.Module, or callable."""
+    if isinstance(loss, nn.Module):
+        return loss
+    if callable(loss) and not isinstance(loss, str):
+        return cast(nn.Module, loss)
+
+    loss_name = loss.lower() if isinstance(loss, str) else "cross_entropy"
+
+    weight = None
+    if isinstance(class_weights, torch.Tensor):
+        weight = class_weights
+    elif isinstance(class_weights, (list, tuple)):
+        weight = torch.as_tensor(class_weights, dtype=torch.float32)
+    if weight is not None and device is not None:
+        weight = weight.to(device)
+
+    loss_map = {
+        "cross_entropy": lambda: nn.CrossEntropyLoss(weight=weight, label_smoothing=label_smoothing),
+        "ce": lambda: nn.CrossEntropyLoss(weight=weight, label_smoothing=label_smoothing),
+        "focal": lambda: FocalLoss(weight=weight, gamma=2.0),
+        "bce": lambda: nn.BCEWithLogitsLoss(pos_weight=weight),
+        "binary_cross_entropy": lambda: nn.BCEWithLogitsLoss(pos_weight=weight),
+        "mse": lambda: nn.MSELoss(),
+        "l2": lambda: nn.MSELoss(),
+        "mae": lambda: nn.L1Loss(),
+        "l1": lambda: nn.L1Loss(),
+        "smooth_l1": lambda: nn.SmoothL1Loss(),
+        "huber": lambda: nn.HuberLoss(),
+        "kl_div": lambda: nn.KLDivLoss(reduction="batchmean"),
+        "kld": lambda: nn.KLDivLoss(reduction="batchmean"),
+        "nll": lambda: nn.NLLLoss(weight=weight),
+        "margin": lambda: nn.MultiMarginLoss(),
+    }
+
+    if loss_name not in loss_map:
+        raise ValueError(f"Unknown loss: {loss_name}. Available: {list(loss_map.keys())}")
+    return loss_map[loss_name]()
+
+
 # ============================================================================
 # TRAINING ENGINE
 # ============================================================================
@@ -466,45 +511,13 @@ class Engine:
 
     def _create_loss_function(self, class_weights: Optional[torch.Tensor] = None) -> nn.Module:
         """Create loss function from config."""
-        loss = getattr(self.config, "loss", "cross_entropy")
-
-        if isinstance(loss, nn.Module):
-            return loss
-        if callable(loss) and not isinstance(loss, str):
-            return cast(nn.Module, loss)
-
-        loss_name = loss.lower() if isinstance(loss, str) else "cross_entropy"
-
-        # Resolve class_weights from config if not explicitly passed
-        weight = class_weights
-        if weight is None and isinstance(getattr(self.config, "class_weights", None), (list, tuple, torch.Tensor)):
-            weight = torch.as_tensor(self.config.class_weights, dtype=torch.float32)
-        if weight is not None:
-            weight = weight.to(self.device)
-
-        label_smoothing = getattr(self.config, "label_smoothing", 0.0)
-
-        loss_map = {
-            "cross_entropy": lambda: nn.CrossEntropyLoss(weight=weight, label_smoothing=label_smoothing),
-            "ce": lambda: nn.CrossEntropyLoss(weight=weight, label_smoothing=label_smoothing),
-            "focal": lambda: FocalLoss(weight=weight, gamma=2.0),
-            "bce": lambda: nn.BCEWithLogitsLoss(pos_weight=weight),
-            "binary_cross_entropy": lambda: nn.BCEWithLogitsLoss(pos_weight=weight),
-            "mse": lambda: nn.MSELoss(),
-            "l2": lambda: nn.MSELoss(),
-            "mae": lambda: nn.L1Loss(),
-            "l1": lambda: nn.L1Loss(),
-            "smooth_l1": lambda: nn.SmoothL1Loss(),
-            "huber": lambda: nn.HuberLoss(),
-            "kl_div": lambda: nn.KLDivLoss(reduction="batchmean"),
-            "kld": lambda: nn.KLDivLoss(reduction="batchmean"),
-            "nll": lambda: nn.NLLLoss(weight=weight),
-            "margin": lambda: nn.MultiMarginLoss(),
-        }
-
-        if loss_name not in loss_map:
-            raise ValueError(f"Unknown loss: {loss_name}. Available: {list(loss_map.keys())}")
-        return loss_map[loss_name]()
+        weight = class_weights if class_weights is not None else getattr(self.config, "class_weights", None)
+        return create_loss_function(
+            loss=getattr(self.config, "loss", "cross_entropy"),
+            class_weights=weight,
+            label_smoothing=getattr(self.config, "label_smoothing", 0.0),
+            device=self.device,
+        )
 
     def _maybe_run_lr_finder(self, train_loader: DataLoader):
         """Run LR range test if lr='auto' or lr_find=True."""
@@ -553,15 +566,32 @@ class Engine:
         ckpt_path = getattr(self.config, "resume_from_checkpoint", None)
         if not ckpt_path:
             return 0
-        ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=False)
+        allow_unsafe = bool(getattr(self.config, "allow_unsafe_checkpoint", False))
+        try:
+            ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=not allow_unsafe)
+        except Exception as e:
+            raise RuntimeError(
+                f"Refusing to load resume checkpoint '{ckpt_path}' with weights_only=False "
+                f"({type(e).__name__}: {e}). Pass `allow_unsafe_checkpoint=True` ONLY if you trust the source."
+            ) from e
+
         self.model.load_state_dict(ckpt["model_state_dict"])
-        if "optimizer_state_dict" in ckpt and ckpt["optimizer_state_dict"]:
-            self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        if "scheduler_state_dict" in ckpt and ckpt["scheduler_state_dict"] and self.scheduler:
-            self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-        if "scaler_state_dict" in ckpt and ckpt["scaler_state_dict"] and self.scaler:
-            self.scaler.load_state_dict(ckpt["scaler_state_dict"])
-        if "ema_state_dict" in ckpt and ckpt["ema_state_dict"] and self.ema:
+        if ckpt.get("optimizer_state_dict"):
+            try:
+                self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            except ValueError as e:
+                print(f"⚠️  Optimizer state dict incompatible ({e}); resuming model weights with fresh optimizer state.")
+        if ckpt.get("scheduler_state_dict") and self.scheduler:
+            try:
+                self.scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+            except Exception as e:
+                print(f"⚠️  Scheduler state dict skipped ({e}).")
+        if ckpt.get("scaler_state_dict") and self.scaler:
+            try:
+                self.scaler.load_state_dict(ckpt["scaler_state_dict"])
+            except Exception as e:
+                print(f"⚠️  GradScaler state dict skipped ({e}).")
+        if ckpt.get("ema_state_dict") and self.ema:
             self.ema.load_state_dict(ckpt["ema_state_dict"])
         self.global_step = ckpt.get("global_step", 0)
         self.best_val_loss = ckpt.get("best_val_loss", float("inf"))
@@ -639,6 +669,10 @@ class Engine:
             print_training_header(self.config)
 
         train_iterable, steps_per_epoch = self._prepare_loader_subset(train_loader)
+        if steps_per_epoch == 0:
+            raise ValueError(
+                "Training DataLoader is empty (0 batches). Check your dataset, split ratio, or drop_last setting."
+            )
         accum_steps = max(1, int(getattr(self.config, "gradient_accumulation_steps", 1)))
         opt_steps_per_epoch = max(1, math.ceil(steps_per_epoch / accum_steps))
         total_opt_steps = self.config.max_steps or (self.config.epochs * opt_steps_per_epoch)
@@ -966,7 +1000,7 @@ class Engine:
 
             self.callbacks.on_batch_end(self, batch_idx, raw_loss_val)
 
-            if (batch_idx + 1) % max(1, self.config.log_every_n_steps) == 0:
+            if (batch_idx + 1) % max(1, self.config.log_every_n_steps) == 0 and batches_run > 0:
                 pbar.set_postfix({"loss": f"{total_loss / batches_run:.4f}"})
 
             if (
@@ -990,6 +1024,10 @@ class Engine:
                 break
 
         pbar.close()
+        if batches_run == 0:
+            raise ValueError(
+                "Training DataLoader yielded 0 valid batches during epoch; cannot complete training."
+            )
         return self._reduce_distributed_metrics(total_loss, batches_run, metric_totals)
 
     def _reduce_distributed_metrics(

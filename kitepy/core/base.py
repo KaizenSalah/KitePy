@@ -5,8 +5,10 @@ All public APIs (CNN, Transformer, Vision, LLM, VLM, Audio, Tabular, Generative)
 Completely decoupled from any single modality via TaskAdapter and the Pillar Registry.
 """
 
+from collections.abc import Mapping
 from copy import deepcopy
 import importlib
+import inspect
 import json
 from pathlib import Path
 import time
@@ -37,6 +39,23 @@ from .utils import (
     print_model_summary,
     set_seed,
 )
+
+
+def _to_jsonable(obj: Any) -> Any:
+    """Recursively convert tensors/arrays/scalars/subclasses into pure weights_only-safe Python primitives."""
+    if isinstance(obj, torch.Tensor):
+        return obj.detach().cpu().tolist()
+    if isinstance(obj, Path):
+        return str(obj)
+    if isinstance(obj, str):
+        return str(obj)  # strip str subclasses (e.g., torch.torch_version.TorchVersion)
+    if isinstance(obj, Mapping):
+        return {str(k): _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_jsonable(v) for v in obj]
+    if hasattr(obj, "item") and callable(getattr(obj, "item")):
+        return obj.item()
+    return obj
 
 
 class BaseModel:
@@ -475,8 +494,41 @@ class BaseModel:
             else:
                 logits = self.model(prepared)
 
+        task_name = (
+            getattr(self, "task", None)
+            or getattr(self.train_config, "task", None)
+            or getattr(self, "default_task", "classification")
+            or "classification"
+        ).lower()
+
+        if not isinstance(logits, torch.Tensor):
+            if isinstance(logits, list) and top_k is not None:
+                formatted = []
+                for det in logits:
+                    if isinstance(det, Mapping) and "scores" in det:
+                        scores_t = det["scores"]
+                        k = min(top_k, len(scores_t))
+                        order = torch.argsort(scores_t, descending=True)[:k]
+                        formatted.append({dk: _to_jsonable(dv[order]) if isinstance(dv, torch.Tensor) else _to_jsonable(dv) for dk, dv in det.items()})
+                    else:
+                        formatted.append(_to_jsonable(det))
+                return formatted[0] if len(formatted) == 1 and not isinstance(inputs, list) else formatted
+            return _to_jsonable(logits) if return_probs else logits
+
+        if task_name == "regression":
+            if top_k is not None:
+                vals = logits.squeeze(-1).detach().cpu().tolist() if (logits.ndim == 2 and logits.size(-1) == 1) else logits.detach().cpu().tolist()
+                if isinstance(vals, list) and len(vals) == 1 and not isinstance(inputs, list):
+                    return vals[0]
+                return vals
+            return logits
+
         if top_k is not None:
-            probs = torch.softmax(logits, dim=-1)
+            if task_name == "binary" and (logits.ndim == 1 or (logits.ndim == 2 and logits.size(-1) == 1)):
+                p_pos = torch.sigmoid(logits.reshape(-1, 1))
+                probs = torch.cat([1.0 - p_pos, p_pos], dim=-1)
+            else:
+                probs = torch.softmax(logits, dim=-1)
             k = min(top_k, probs.size(-1))
             values, indices = torch.topk(probs, k=k, dim=-1)
             results = []
@@ -489,6 +541,9 @@ class BaseModel:
             return results[0] if len(results) == 1 and not isinstance(inputs, list) else results
 
         if return_probs:
+            if task_name == "binary" and (logits.ndim == 1 or (logits.ndim == 2 and logits.size(-1) == 1)):
+                p_pos = torch.sigmoid(logits.reshape(-1, 1))
+                return torch.cat([1.0 - p_pos, p_pos], dim=-1)
             return torch.softmax(logits, dim=-1)
 
         return logits
@@ -517,18 +572,19 @@ class BaseModel:
             else:
                 train_cfg_dict[k] = v
 
-        metadata = {
+        metadata = _to_jsonable({
             "model_name": self.model_name,
             "modality": self.modality,
+            "task": getattr(self, "task", getattr(self.train_config, "task", getattr(self, "default_task", None))),
             "config": self.config.to_dict(),
             "data_config": self.data_config.to_dict(),
             "train_config": train_cfg_dict,
             "class_names": self.class_names,
             "is_trained": self.is_trained,
             "training_history": self.training_history,
-            "last_input_shape": self.last_input_shape,
+            "last_input_shape": list(self.last_input_shape) if self.last_input_shape is not None else None,
             "lineage": get_lineage_metadata(),
-        }
+        })
 
         if use_safe:
             st_path, meta_path = save_safe_bundle(self.model.state_dict(), metadata, path)
@@ -549,11 +605,14 @@ class BaseModel:
         path: Union[str, Path],
         device: Optional[str] = None,
         custom_model: Optional[nn.Module] = None,
+        allow_unsafe: bool = False,
     ):
         """
         Load model from `.safetensors` safe bundle or `.pt` checkpoint.
 
         For custom nn.Module architectures, pass `custom_model=YourModule()`.
+        By default rejects untrusted pickle `.pt` files (`weights_only=True`); pass
+        `allow_unsafe=True` only for trusted legacy checkpoints.
         """
         from .serialization import load_safe_bundle
 
@@ -563,9 +622,22 @@ class BaseModel:
             checkpoint["model_state_dict"] = state_dict
         else:
             try:
-                checkpoint = torch.load(p, map_location="cpu", weights_only=True)
-            except Exception:
-                checkpoint = torch.load(p, map_location="cpu", weights_only=False)
+                checkpoint = torch.load(p, map_location="cpu", weights_only=not allow_unsafe)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Refusing to unpickle checkpoint '{p}' with weights_only=False ({type(e).__name__}: {e}). "
+                    "Re-save as a `.safetensors` safe bundle, or pass `allow_unsafe=True` only if you trust the source."
+                ) from e
+
+        if not isinstance(checkpoint, Mapping):
+            raise ValueError(f"Invalid checkpoint payload type {type(checkpoint).__name__} in '{p}'.")
+
+        if "config" not in checkpoint and custom_model is None:
+            meta_hint = f" (missing sidecar '{p.with_suffix('.meta.json')}')" if p.suffix.lower() == ".safetensors" else ""
+            raise ValueError(
+                f"Cannot reconstruct model from weights-only checkpoint '{p}'{meta_hint}: "
+                "required metadata key 'config' is absent. Save with `model.save(...)` or pass `custom_model=...`."
+            )
 
         model_ref = custom_model if custom_model is not None else checkpoint.get("model_name")
 
@@ -575,14 +647,21 @@ class BaseModel:
                 "Pass `custom_model=YourNet()` to load()."
             )
 
-        instance = cls(model=model_ref, config=checkpoint["config"])
+        cfg_dict = checkpoint.get("config") or {}
+        saved_task = checkpoint.get("task") or (checkpoint.get("train_config") or {}).get("task")
+        init_params = inspect.signature(cls.__init__).parameters
+        if "task" in init_params and saved_task is not None:
+            instance = cls(model=model_ref, config=cfg_dict, task=saved_task)
+        else:
+            instance = cls(model=model_ref, config=cfg_dict)
         if checkpoint.get("data_config"):
             instance.data_config = DataConfig.from_dict(checkpoint["data_config"], strict=False)
         if checkpoint.get("train_config"):
             instance.train_config = TrainingConfig.from_dict(checkpoint["train_config"], strict=False)
 
         instance.class_names = checkpoint.get("class_names")
-        instance.last_input_shape = checkpoint.get("last_input_shape")
+        last_shape = checkpoint.get("last_input_shape")
+        instance.last_input_shape = tuple(last_shape) if isinstance(last_shape, (list, tuple)) else None
 
         instance._build_model()
         instance.model.load_state_dict(checkpoint["model_state_dict"])
@@ -869,6 +948,7 @@ class BaseModel:
 
     def find_lr(self, data: Any = "synthetic", **kwargs) -> float:
         """Find optimal learning rate using the LR Range Test."""
+        from .engine import create_loss_function
         from .lr_finder import LRFinder
 
         _, data_kw, train_kw, _ = split_kwargs(kwargs, self.default_config_class)
@@ -892,7 +972,12 @@ class BaseModel:
             modality=self.modality,
         )
         optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-7)
-        criterion = nn.CrossEntropyLoss()
+        criterion = create_loss_function(
+            loss=getattr(train_config, "loss", "cross_entropy"),
+            class_weights=getattr(train_config, "class_weights", None),
+            label_smoothing=getattr(train_config, "label_smoothing", 0.0),
+            device=device,
+        )
 
         lr_finder = LRFinder(self.model, optimizer, criterion, device, adapter=adapter)
         lr_finder.find(train_loader)
@@ -958,8 +1043,8 @@ class BaseModel:
         app = FastAPI(title=f"KitePy Inference API ({self.model_name})")
 
         class PredictRequest(PydanticBaseModel):
-            inputs: List[Any]
-            top_k: int = 5
+            inputs: Any
+            top_k: Optional[int] = 5
 
         @app.get("/health")
         def health():
@@ -968,9 +1053,8 @@ class BaseModel:
         @app.post("/predict")
         def predict_endpoint(req: PredictRequest):
             try:
-                tensor = torch.tensor(req.inputs, dtype=torch.float32)
-                preds = self.predict(tensor, top_k=req.top_k)
-                return {"predictions": preds}
+                preds = self.predict(req.inputs, top_k=req.top_k)
+                return {"predictions": _to_jsonable(preds)}
             except Exception as e:
                 raise HTTPException(status_code=400, detail=str(e))
 

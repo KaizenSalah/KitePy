@@ -128,12 +128,19 @@ class Audio(BaseModel):
         if not isinstance(input_data, torch.Tensor):
             input_data = torch.as_tensor(input_data, dtype=torch.float32)
 
+        if input_data.numel() == 0:
+            raise ValueError("Audio waveform cannot be empty (0 samples).")
         if input_data.ndim == 1:
             input_data = input_data.unsqueeze(0)
         if input_data.ndim == 2:
+            if input_data.size(-1) < 256:
+                input_data = nn.functional.pad(input_data, (0, 256 - input_data.size(-1)))
             window = torch.hann_window(256, device=input_data.device)
             stft = torch.stft(input_data, n_fft=256, hop_length=128, window=window, return_complex=True)
-            return torch.log1p(stft.abs()).unsqueeze(1)
+            spec = torch.log1p(stft.abs()).unsqueeze(1)
+            if spec.shape[-2:] != (64, 128):
+                spec = nn.functional.interpolate(spec, size=(64, 128), mode="bilinear", align_corners=False)
+            return spec
         if input_data.ndim == 3:
             return input_data.unsqueeze(0)
         return input_data
