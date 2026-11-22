@@ -1053,7 +1053,14 @@ class BaseModel:
         @app.post("/predict")
         def predict_endpoint(req: PredictRequest):
             try:
-                preds = self.predict(req.inputs, top_k=req.top_k)
+                raw_inputs = req.inputs
+                if not isinstance(raw_inputs, (str, Mapping)):
+                    try:
+                        # Convert numeric JSON arrays back to Tensor to preserve single-item unwrapping
+                        raw_inputs = torch.tensor(raw_inputs, dtype=torch.float32)
+                    except (TypeError, ValueError, RuntimeError):
+                        pass
+                preds = self.predict(raw_inputs, top_k=req.top_k)
                 return {"predictions": _to_jsonable(preds)}
             except Exception as e:
                 raise HTTPException(status_code=400, detail=str(e))

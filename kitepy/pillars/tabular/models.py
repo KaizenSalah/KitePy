@@ -89,9 +89,10 @@ class Tabular(BaseModel):
         self.task = task.lower()
         if self.task == "regression":
             kwargs.setdefault("loss", "mse")
-            kwargs.setdefault("num_classes", 1)
         kwargs.setdefault("task", self.task)
         super().__init__(model, config, adapter=get_adapter(self.task), **kwargs)
+        if self.task == "regression" and "num_classes" not in self._explicit_model_fields:
+            self.config.num_classes = 1
         self.default_task = self.task
 
     def _build_model(self):

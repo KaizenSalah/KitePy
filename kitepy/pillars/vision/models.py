@@ -298,12 +298,13 @@ class Vision(_VisionMixin, BaseModel):
         adapter_name, default_loss = self.TASK_DEFAULTS[self.task]
         kwargs.setdefault("loss", default_loss)
         kwargs.setdefault("task", adapter_name)
-        if self.task in ("binary", "regression"):
-            kwargs.setdefault("num_classes", 1)
-        elif self.task == "segmentation":
-            kwargs.setdefault("num_classes", 2)
 
         super().__init__(model, config, adapter=get_adapter(adapter_name), **kwargs)
+        if "num_classes" not in self._explicit_model_fields:
+            if self.task in ("binary", "regression"):
+                self.config.num_classes = 1
+            elif self.task == "segmentation":
+                self.config.num_classes = 2
         self.default_task = adapter_name
 
     def _build_model(self):

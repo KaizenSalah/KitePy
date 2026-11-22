@@ -40,12 +40,12 @@ class _MaliciousPickleCanary:
 
 
 def test_vision_and_tabular_save_load_preserve_task_and_weights(tmp_path):
-    for task, model_name, sample in [
-        ("segmentation", "unet", torch.randn(1, 3, 32, 32)),
-        ("detection", "tiny_detector", torch.randn(1, 3, 64, 64)),
-        ("binary", "resnet18", torch.randn(1, 3, 32, 32)),
+    for task, model_name, nc, sample in [
+        ("segmentation", "unet", 3, torch.randn(1, 3, 32, 32)),
+        ("detection", "tiny_detector", 4, torch.randn(1, 3, 64, 64)),
+        ("binary", "resnet18", 1, torch.randn(1, 3, 32, 32)),
     ]:
-        vis = Vision(task=task, model=model_name, num_classes=2 if task != "binary" else 1)
+        vis = Vision(task=task, model=model_name, num_classes=nc)
         vis.train("synthetic", epochs=1, img_size=32 if task != "detection" else 64, batch_size=4, fast_dev_run=True, save_every_n_epochs=0)
         bundle_path = tmp_path / f"vis_{task}.safetensors"
         vis.save(bundle_path, safe=True)
@@ -53,9 +53,12 @@ def test_vision_and_tabular_save_load_preserve_task_and_weights(tmp_path):
         reloaded = Vision.load(bundle_path)
         assert reloaded.task == task
         assert reloaded.model_name == model_name
+        assert reloaded.config.num_classes == nc
         out = reloaded.predict(sample)
         if task == "detection":
             assert isinstance(out, list) and "boxes" in out[0]
+        elif task == "segmentation":
+            assert out.shape == (1, nc, 32, 32)
         elif task == "binary":
             probs = reloaded.predict(sample, top_k=2)
             assert len(probs) == 2 and abs(sum(p["confidence"] for p in probs) - 1.0) < 1e-4
@@ -82,7 +85,12 @@ def test_to_fastapi_text_detection_and_regression():
     det.train("synthetic", epochs=1, img_size=64, batch_size=4, fast_dev_run=True, save_every_n_epochs=0)
     resp_det = TestClient(det.to_fastapi()).post("/predict", json={"inputs": np.random.rand(1, 3, 64, 64).tolist(), "top_k": 3})
     assert resp_det.status_code == 200
-    assert "boxes" in resp_det.json()["predictions"][0]
+    assert "boxes" in resp_det.json()["predictions"]
+
+    cnn = Vision(task="classification", model="resnet18", num_classes=4)
+    cnn._build_model()
+    resp_cnn = TestClient(cnn.to_fastapi()).post("/predict", json={"inputs": np.random.randn(1, 3, 32, 32).tolist(), "top_k": 2})
+    assert resp_cnn.status_code == 200 and len(resp_cnn.json()["predictions"]) == 2
 
     reg = Tabular("tabular_mlp", task="regression")
     reg.train("synthetic", epochs=1, batch_size=8, fast_dev_run=True, save_every_n_epochs=0)
