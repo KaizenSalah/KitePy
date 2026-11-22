@@ -40,24 +40,31 @@ class AudioCNN(nn.Module):
 
 
 class AudioTransformer(nn.Module):
-    """Lightweight spectrogram patch Transformer (AST-style with 2D frequency/time pos embeddings)."""
+    """Lightweight spectrogram patch Transformer (Pre-LN + instance norm + 2D pos embeddings)."""
 
     def __init__(self, in_channels: int = 1, hidden_dim: int = 192, num_classes: int = 10):
         super().__init__()
+        self.input_norm = nn.InstanceNorm2d(in_channels, affine=True)
         self.patch_embed = nn.Conv2d(in_channels, hidden_dim, kernel_size=8, stride=8)
         # Separable learnable 2D positional embeddings so frequency bands (pitch) remain distinguishable
-        self.freq_emb = nn.Parameter(torch.randn(1, hidden_dim, 64, 1) * 0.02)
-        self.time_emb = nn.Parameter(torch.randn(1, hidden_dim, 1, 64) * 0.02)
+        self.freq_emb = nn.Parameter(torch.randn(1, hidden_dim, 64, 1) * 0.05)
+        self.time_emb = nn.Parameter(torch.randn(1, hidden_dim, 1, 64) * 0.05)
         enc_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim, nhead=4, dim_feedforward=hidden_dim * 2, batch_first=True, activation="gelu"
+            d_model=hidden_dim,
+            nhead=4,
+            dim_feedforward=hidden_dim * 2,
+            dropout=0.1,
+            batch_first=True,
+            activation="gelu",
+            norm_first=True,
         )
-        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=2)
+        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=2, enable_nested_tensor=False)
         self.norm = nn.LayerNorm(hidden_dim)
         self.classifier = nn.Linear(hidden_dim, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, C, F, T) -> (B, D, F_p, T_p)
-        grid = self.patch_embed(x)
+        grid = self.patch_embed(self.input_norm(x))
         fp, tp = grid.shape[2], grid.shape[3]
         f_pos = self.freq_emb[:, :, :fp, :] if fp <= self.freq_emb.size(2) else nn.functional.interpolate(self.freq_emb, size=(fp, 1), mode="bilinear", align_corners=False)
         t_pos = self.time_emb[:, :, :, :tp] if tp <= self.time_emb.size(3) else nn.functional.interpolate(self.time_emb, size=(1, tp), mode="bilinear", align_corners=False)
