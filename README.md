@@ -1,4 +1,4 @@
-# kitepy - Dead Simple Deep Learning 🚀
+# KitePy - Dead Simple Deep Learning 🚀
 
 [![CI](https://github.com/KaizenSalah/kitepy/actions/workflows/ci.yml/badge.svg)](https://github.com/KaizenSalah/kitepy/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)

@@ -6,7 +6,7 @@ Simple on the surface, infinitely extensible underneath:
 - kitepy.pillars: Vision, Language, Multimodal, Audio, Tabular, Generative
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from kitepy.core import (
     ADAPTER_REGISTRY,

@@ -152,4 +152,4 @@ def test_execution_planner_end_to_end(tmp_path):
         save_every_n_epochs=0,
     )
     assert model.execution_report["execution_plan"] is not None
-    assert model.execution_report["lineage"]["kitepy_version"] == "0.2.0"
+    assert model.execution_report["lineage"]["kitepy_version"] == "0.2.1"

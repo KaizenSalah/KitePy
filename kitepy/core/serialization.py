@@ -36,7 +36,7 @@ def get_lineage_metadata() -> Dict[str, Any]:
         pass
 
     return {
-        "kitepy_version": "0.2.0",
+        "kitepy_version": "0.2.1",
         "torch_version": str(torch.__version__),
         "python_version": str(sys.version.split()[0]),
         "git_sha": str(git_sha) if git_sha is not None else None,
