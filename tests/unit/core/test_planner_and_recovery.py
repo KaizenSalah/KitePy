@@ -30,6 +30,41 @@ def test_execution_planner_solves_micro_batch_and_grad_accum():
     assert plan.reason != "nominal"
 
 
+def test_engine_executes_planned_micro_batches_when_loader_exceeds_plan(tmp_path):
+    """If DataLoader yields batch=8 but ExecutionPlanner solves micro_bs<=4, Engine chunks each batch."""
+    seen_batch_sizes = []
+
+    class RecordingNet(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = nn.Linear(64, 10)
+
+        def forward(self, x):
+            if self.training:
+                seen_batch_sizes.append(x.size(0))
+            return self.fc(x)
+
+    ds = TensorDataset(torch.randn(16, 64), torch.randint(0, 10, (16,)))
+    loader = DataLoader(ds, batch_size=8)
+
+    cfg = TrainingConfig(
+        epochs=1,
+        batch_size=8,
+        auto_plan=True,
+        memory_budget_mb=0.05,  # Forces micro_batch_size=1
+        checkpoint_dir=str(tmp_path),
+        save_every_n_epochs=0,
+        devices="cpu",
+        mixed_precision=False,
+    )
+    engine = Engine(RecordingNet(), cfg)
+    engine.train(loader)
+    assert engine.execution_plan is not None
+    assert engine.execution_plan.micro_batch_size < 8
+    assert max(seen_batch_sizes) <= engine.execution_plan.micro_batch_size
+    assert engine.global_step == 2  # Preserves 2 optimizer steps (1 per 8-sample batch)
+
+
 def test_engine_runtime_oom_microbatch_recovery(tmp_path):
     """Simulate CUDA/runtime OOM on batch > 2 and verify Engine automatically splits & recovers."""
 

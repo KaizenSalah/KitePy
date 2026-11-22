@@ -128,22 +128,38 @@ class ExecutionPlanner:
         adapter: TaskAdapter,
         criterion: nn.Module,
         device: torch.device,
+        amp_enabled: bool = False,
+        amp_dtype: str = "fp32",
     ) -> float:
         """Estimate activation memory per sample using a single dry pass or tensor-size heuristic."""
         bs = max(1, infer_batch_size(sample_batch))
         if device.type == "cuda" and torch.cuda.is_available():
             try:
-                snap = deepcopy(model.state_dict())
-                torch.cuda.reset_peak_memory_stats(device)
-                base_mem = torch.cuda.memory_allocated(device)
+                cpu_snap = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
                 micro = _slice_batch(sample_batch, 0, 1)
                 prep = adapter.prepare_batch(micro, device)
+                ac_dtype = torch.bfloat16 if amp_dtype == "bf16" else torch.float16
                 model.train()
-                loss, _, _ = adapter.forward_and_loss(model, prep, criterion, engine=None)
+
+                # Warm up cuDNN / allocator once before measuring delta
+                with torch.amp.autocast("cuda", dtype=ac_dtype, enabled=amp_enabled):
+                    warm_loss, _, _ = adapter.forward_and_loss(model, prep, criterion, engine=None)
+                warm_loss.backward()
+                model.zero_grad(set_to_none=True)
+                torch.cuda.synchronize(device)
+                torch.cuda.empty_cache()
+
+                torch.cuda.reset_peak_memory_stats(device)
+                base_mem = torch.cuda.memory_allocated(device)
+                with torch.amp.autocast("cuda", dtype=ac_dtype, enabled=amp_enabled):
+                    loss, _, _ = adapter.forward_and_loss(model, prep, criterion, engine=None)
                 loss.backward()
+                torch.cuda.synchronize(device)
                 peak = torch.cuda.max_memory_allocated(device)
                 model.zero_grad(set_to_none=True)
-                model.load_state_dict(snap)
+                model.load_state_dict({k: v.to(device) for k, v in cpu_snap.items()})
+                del cpu_snap
+                torch.cuda.empty_cache()
                 delta_mb = max(1.0, (peak - base_mem) / (1024.0 * 1024.0))
                 return delta_mb
             except Exception:
@@ -201,8 +217,10 @@ class ExecutionPlanner:
                 amp_dtype = "bf16"
 
         static_mb = estimate_static_memory_mb(model, bytes_per_param_state=12.0 if amp_enabled else 16.0)
-        act_per_sample_mb = self._probe_activation_mb_per_sample(model, sample_batch, adapter, criterion, device)
-        if amp_enabled:
+        act_per_sample_mb = self._probe_activation_mb_per_sample(
+            model, sample_batch, adapter, criterion, device, amp_enabled=amp_enabled, amp_dtype=amp_dtype
+        )
+        if amp_enabled and device.type != "cuda":
             act_per_sample_mb *= 0.6
 
         available_act_mb = max(1.0, budget_mb - static_mb)

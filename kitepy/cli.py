@@ -108,8 +108,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     if args.command == "predict":
+        import contextlib
         cls = _resolve_model_cls(args.modality)
-        model = cls.load(args.checkpoint)
+        with contextlib.redirect_stdout(sys.stderr):
+            model = cls.load(args.checkpoint)
         preds = model.predict(args.input, top_k=args.top_k)
         print(json.dumps(preds, indent=2))
         return 0

@@ -115,6 +115,5 @@ def test_utils_basics(tmp_path):
     open(p1, "w").close()
     open(p2, "w").close()
     cleanup_old_checkpoints(str(tmp_path), keep_top_k=1, metric_name="loss", lower_is_better=True)
-    assert not os.path.exists(p1) if False else True
     from pathlib import Path
     assert not Path(p1).exists() and Path(p2).exists()

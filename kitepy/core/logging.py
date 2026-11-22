@@ -45,6 +45,17 @@ class _JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
+def _attach_file_handler(logger: logging.Logger, filepath: str, formatter: logging.Formatter):
+    resolved = str(Path(filepath).resolve())
+    for existing in logger.handlers:
+        if isinstance(existing, logging.FileHandler) and getattr(existing, "baseFilename", None) == resolved:
+            return
+    Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(filepath, encoding="utf-8")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+
 def get_logger(
     name: str = "kitepy",
     level: Optional[str] = None,
@@ -52,31 +63,42 @@ def get_logger(
     json_file: Optional[str] = None,
 ) -> logging.Logger:
     """Return a rank-aware KitePy logger."""
+    root_logger = logging.getLogger("kitepy")
+    if not root_logger.handlers:
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(logging.Formatter("%(message)s"))
+        stream_handler.addFilter(_RankZeroFilter())
+        root_logger.addHandler(stream_handler)
+        root_logger.propagate = False
+
     logger = logging.getLogger(name)
     resolved_level = (level or os.environ.get("KITEPY_LOG_LEVEL", "INFO")).upper()
-    if resolved_level == "SILENT":
-        logger.setLevel(logging.CRITICAL + 10)
-    else:
-        logger.setLevel(getattr(logging, resolved_level, logging.INFO))
-
-    if not logger.handlers:
+    target_level = logging.CRITICAL + 10 if resolved_level == "SILENT" else getattr(logging, resolved_level, logging.INFO)
+    logger.setLevel(target_level)
+    if name == "kitepy" or name.startswith("kitepy."):
+        root_logger.setLevel(target_level)
+        if name != "kitepy":
+            logger.propagate = True
+    elif not logger.handlers:
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(logging.Formatter("%(message)s"))
         stream_handler.addFilter(_RankZeroFilter())
         logger.addHandler(stream_handler)
         logger.propagate = False
 
+    # Route file/JSON handlers through parent "kitepy" logger when under "kitepy.*"
+    # so planner, engine, and guard events all land in the same structured log.
+    target_handler_logger = root_logger if name.startswith("kitepy.") else logger
+
     if log_file and _get_global_rank() == 0:
-        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(log_file, encoding="utf-8")
-        fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-        logger.addHandler(fh)
+        _attach_file_handler(
+            target_handler_logger,
+            log_file,
+            logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"),
+        )
 
     if json_file and _get_global_rank() == 0:
-        Path(json_file).parent.mkdir(parents=True, exist_ok=True)
-        jh = logging.FileHandler(json_file, encoding="utf-8")
-        jh.setFormatter(_JsonFormatter())
-        logger.addHandler(jh)
+        _attach_file_handler(target_handler_logger, json_file, _JsonFormatter())
 
     return logger
 

@@ -147,8 +147,16 @@ class _VisionMixin:
         raise TypeError(f"Unsupported input type for vision prediction: {type(item)}")
 
     def _preprocess_input(self, input_data: Any) -> torch.Tensor:
-        img_size = getattr(self.config, "img_size", 224) or 224
-        in_channels = getattr(self.config, "in_channels", 3) or 3
+        img_size = (
+            getattr(self.data_config, "img_size", None)
+            or getattr(self.config, "img_size", 224)
+            or 224
+        )
+        in_channels = (
+            getattr(self.data_config, "in_channels", None)
+            or getattr(self.config, "in_channels", 3)
+            or 3
+        )
 
         if isinstance(input_data, torch.Tensor):
             if input_data.ndim == 3:

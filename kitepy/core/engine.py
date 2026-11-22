@@ -15,9 +15,8 @@ Supports:
 
 from itertools import islice
 import math
-from pathlib import Path
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
 import torch
@@ -26,11 +25,10 @@ from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .adapters import TaskAdapter, get_adapter
+from .adapters import TaskAdapter, get_adapter, infer_batch_size
 from .callbacks import (
     CallbackList,
     CSVLogger,
-    ProgressLogger,
     TensorBoardLogger,
     WandbLogger,
 )
@@ -122,14 +120,17 @@ def _apply_mixup_cutmix(
 def _compute_balanced_class_weights(train_loader: DataLoader, device: torch.device) -> Optional[torch.Tensor]:
     """Compute inverse-frequency class weights from dataset targets if available."""
     dataset = getattr(train_loader, "dataset", None)
+    if dataset is None:
+        return None
     targets = getattr(dataset, "targets", None)
     if targets is None and hasattr(dataset, "dataset") and hasattr(dataset, "indices"):
-        inner = dataset.dataset
-        inner_targets = getattr(inner, "targets", None)
-        if inner_targets is not None:
-            targets = [inner_targets[i] for i in dataset.indices]
-        elif hasattr(inner, "tensors") and len(inner.tensors) >= 2:
-            targets = inner.tensors[1][dataset.indices]
+        inner = getattr(dataset, "dataset", None)
+        if inner is not None:
+            inner_targets = getattr(inner, "targets", None)
+            if inner_targets is not None:
+                targets = [inner_targets[i] for i in dataset.indices]
+            elif hasattr(inner, "tensors") and len(inner.tensors) >= 2:
+                targets = inner.tensors[1][dataset.indices]
     if targets is None and hasattr(dataset, "tensors") and len(dataset.tensors) >= 2:
         targets = dataset.tensors[1]
     if targets is None:
@@ -209,14 +210,14 @@ class Engine:
         # Optional torch.compile
         if getattr(config, "compile", False) and hasattr(torch, "compile"):
             try:
-                self.model = torch.compile(self.model, mode=getattr(config, "compile_mode", "default"))
+                self.model = cast(nn.Module, torch.compile(self.model, mode=getattr(config, "compile_mode", "default")))
             except Exception as e:
                 print(f"⚠️  torch.compile skipped: {e}")
 
         # AMP / mixed precision setup
         self.amp_enabled = False
         self.amp_dtype = torch.float16
-        self.scaler = None
+        self.scaler: Optional[Any] = None
         self._configure_precision()
 
         # Optimizer, Scheduler, Criterion
@@ -236,6 +237,7 @@ class Engine:
         )
         self.planner = ExecutionPlanner()
         self.execution_plan: Optional[ExecutionPlan] = None
+        self._planned_micro_batch_size: Optional[int] = None
         self.guard = RuntimeGuard(
             auto_recover=getattr(config, "auto_recover", True),
             max_consecutive_nan_steps=getattr(config, "max_consecutive_nan_steps", 5),
@@ -256,11 +258,22 @@ class Engine:
         if mp in (False, "fp32", "no", None):
             self.amp_enabled = False
             self.config.mixed_precision = False
+            self.scaler = None
             return
 
         if self.device.type == "cuda":
             self.amp_enabled = True
-            if mp == "bf16" or self.config.amp_dtype == "bf16":
+            prefer_bf16 = (
+                mp == "bf16"
+                or self.config.amp_dtype == "bf16"
+                or (
+                    self.config.amp_dtype == "auto"
+                    and mp is True
+                    and hasattr(torch.cuda, "is_bf16_supported")
+                    and torch.cuda.is_bf16_supported()
+                )
+            )
+            if prefer_bf16 and mp != "fp16":
                 self.amp_dtype = torch.bfloat16
                 self.scaler = None  # bf16 does not need GradScaler
             else:
@@ -274,15 +287,19 @@ class Engine:
         else:
             self.amp_enabled = False
             self.config.mixed_precision = False
+            self.scaler = None
 
     def _build_callbacks(self) -> CallbackList:
         cb_list = CallbackList(self.config.callbacks)
-        if getattr(self.config, "csv_log_dir", None):
-            cb_list.add(CSVLogger(log_dir=self.config.csv_log_dir))
-        if getattr(self.config, "tensorboard_dir", None):
-            cb_list.add(TensorBoardLogger(log_dir=self.config.tensorboard_dir))
-        if getattr(self.config, "wandb_project", None):
-            cb_list.add(WandbLogger(project=self.config.wandb_project))
+        csv_dir = getattr(self.config, "csv_log_dir", None)
+        if isinstance(csv_dir, str) and csv_dir:
+            cb_list.add(CSVLogger(log_dir=csv_dir))
+        tb_dir = getattr(self.config, "tensorboard_dir", None)
+        if isinstance(tb_dir, str) and tb_dir:
+            cb_list.add(TensorBoardLogger(log_dir=tb_dir))
+        wandb_proj = getattr(self.config, "wandb_project", None)
+        if isinstance(wandb_proj, str) and wandb_proj:
+            cb_list.add(WandbLogger(project=wandb_proj))
         return cb_list
 
     def _create_optimizer(self) -> torch.optim.Optimizer:
@@ -293,7 +310,7 @@ class Engine:
             return optimizer
 
         raw_lr = self.config.lr
-        base_lr = 1e-3 if (isinstance(raw_lr, str) and raw_lr == "auto") else raw_lr
+        base_lr: Union[float, Dict[str, float]] = 1e-3 if isinstance(raw_lr, str) else raw_lr
 
         param_groups = build_parameter_groups(
             model=self.model,
@@ -310,10 +327,10 @@ class Engine:
         kwargs = dict(self.config.optimizer_kwargs or {})
 
         if callable(optimizer) and not isinstance(optimizer, str):
-            return optimizer(param_groups, **kwargs)
+            return cast(torch.optim.Optimizer, optimizer(param_groups, **kwargs))
 
         optimizer_name = optimizer.lower()
-        opt_map = {
+        opt_map: Dict[str, Callable[[], torch.optim.Optimizer]] = {
             "adam": lambda: torch.optim.Adam(param_groups, **kwargs),
             "adamw": lambda: torch.optim.AdamW(param_groups, **kwargs),
             "sgd": lambda: torch.optim.SGD(param_groups, momentum=kwargs.pop("momentum", 0.9), **kwargs),
@@ -327,8 +344,8 @@ class Engine:
 
         if optimizer_name == "lion":
             try:
-                from lion_pytorch import Lion
-                return Lion(param_groups, **kwargs)
+                from lion_pytorch import Lion  # type: ignore[import-not-found]
+                return cast(torch.optim.Optimizer, Lion(param_groups, **kwargs))
             except ImportError:
                 raise ImportError("Lion optimizer requires: pip install lion-pytorch")
 
@@ -411,6 +428,7 @@ class Engine:
 
         # Remaining step schedulers (cosine, linear, polynomial)
         main_steps = max(1, total_opt_steps - warmup_steps)
+        main_sched: lr_scheduler.LRScheduler
         if scheduler_name == "cosine":
             main_sched = lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=main_steps, **kwargs)
         elif scheduler_name == "linear":
@@ -447,7 +465,7 @@ class Engine:
         if isinstance(loss, nn.Module):
             return loss
         if callable(loss) and not isinstance(loss, str):
-            return loss
+            return cast(nn.Module, loss)
 
         loss_name = loss.lower() if isinstance(loss, str) else "cross_entropy"
 
@@ -562,10 +580,14 @@ class Engine:
         self._maybe_run_lr_finder(train_loader)
 
         # Constraint-aware pre-flight ExecutionPlanner
+        self._planned_micro_batch_size = None
         if getattr(self.config, "auto_plan", False) or getattr(self.config, "memory_budget_mb", None) is not None:
             try:
                 sample_batch = next(iter(train_loader))
-                target_bs = self.config.batch_size if isinstance(self.config.batch_size, int) else 32
+                observed_bs = infer_batch_size(sample_batch)
+                target_bs = observed_bs if observed_bs > 0 else (
+                    self.config.batch_size if isinstance(self.config.batch_size, int) else 32
+                )
                 world_sz = self.accelerator.num_processes if self.accelerator is not None else 1
                 self.execution_plan = self.planner.plan(
                     model=self.model,
@@ -579,9 +601,28 @@ class Engine:
                     memory_budget_mb=getattr(self.config, "memory_budget_mb", None),
                     world_size=world_sz,
                 )
-                self.config.gradient_accumulation_steps = self.execution_plan.gradient_accumulation_steps
-                if self.execution_plan.gradient_checkpointing and hasattr(self.model, "gradient_checkpointing_enable"):
-                    self.model.gradient_checkpointing_enable()
+                # Sync planned precision & micro-batch size onto Engine
+                if self.accelerator is None:
+                    self.amp_enabled = self.execution_plan.amp_enabled
+                    if self.execution_plan.amp_dtype == "bf16":
+                        self.amp_dtype = torch.bfloat16
+                        self.scaler = None
+                    elif self.execution_plan.amp_dtype == "fp16" and self.device.type == "cuda":
+                        self.amp_dtype = torch.float16
+                        self.scaler = self.scaler or torch.amp.GradScaler("cuda")
+                    else:
+                        self.amp_dtype = torch.float32
+                        self.scaler = None
+
+                if self.execution_plan.micro_batch_size < target_bs:
+                    self._planned_micro_batch_size = self.execution_plan.micro_batch_size
+
+                if self.execution_plan.gradient_checkpointing:
+                    grad_ckpt_fn = getattr(self.model, "gradient_checkpointing_enable", None)
+                    if callable(grad_ckpt_fn):
+                        grad_ckpt_fn()
+
+                self.logger.info("execution_plan", extra={"metrics": self.execution_plan.to_dict()})
             except StopIteration:
                 pass
 
@@ -606,6 +647,10 @@ class Engine:
 
         start_epoch = self._resume_if_requested()
         self.callbacks.on_train_start(self)
+        self.logger.info(
+            "train_start",
+            extra={"metrics": {"epochs": self.config.epochs, "amp_enabled": self.amp_enabled, "amp_dtype": str(self.amp_dtype)}},
+        )
 
         max_epochs = self.config.epochs
         if self.config.max_steps is not None and max_epochs <= start_epoch:
@@ -676,6 +721,7 @@ class Engine:
             )
 
             self.callbacks.on_epoch_end(self, epoch, history_entry)
+            self.logger.info(f"epoch_{epoch}_end", extra={"metrics": history_entry})
 
             if self.config.save_every_n_epochs and epoch % self.config.save_every_n_epochs == 0:
                 if self.accelerator is None or self.accelerator.is_main_process:
@@ -716,6 +762,7 @@ class Engine:
             "global_step": self.global_step,
             "best_val_loss": self.best_val_loss if self.best_val_loss != float("inf") else None,
         }
+        self.logger.info("train_end", extra={"metrics": self.execution_report})
 
         return self.model, self.history
 
@@ -724,7 +771,10 @@ class Engine:
         if self.scaler is not None:
             self.scaler.unscale_(self.optimizer)
 
-        if self.guard.auto_recover and not self.guard.check_finite_gradients(self.model):
+        # Under FP16 GradScaler, normal initial overflow is handled automatically via scale backoff;
+        # only trigger RuntimeGuard gradient abort/skip when unscaled (fp32/bf16) or scale has bottomed out.
+        should_check_grads = self.scaler is None or self.scaler.get_scale() <= 1.0
+        if self.guard.auto_recover and should_check_grads and not self.guard.check_finite_gradients(self.model):
             self.optimizer.zero_grad(set_to_none=True)
             if self.scaler is not None:
                 self.scaler.update()
@@ -757,8 +807,12 @@ class Engine:
         batch: Any,
         accum_steps: int,
     ) -> Tuple[float, Any, Any, bool]:
-        """Run forward/backward on a batch, with automatic OOM micro-batch splitting and NaN guarding."""
+        """Run forward/backward on a batch, with planned micro-batching, OOM splitting, and NaN guarding."""
+        batch_size = max(1, infer_batch_size(batch))
         chunks_to_try = 1
+        if self._planned_micro_batch_size and self._planned_micro_batch_size < batch_size:
+            chunks_to_try = max(1, math.ceil(batch_size / self._planned_micro_batch_size))
+
         while True:
             try:
                 if chunks_to_try == 1:
@@ -804,7 +858,7 @@ class Engine:
                 return total_raw_loss / len(sub_batches), last_outputs, last_targets, True
 
             except Exception as exc:
-                if self.guard.auto_recover and self.guard.is_oom_error(exc) and chunks_to_try < 8:
+                if self.guard.auto_recover and self.guard.is_oom_error(exc) and chunks_to_try < max(8, batch_size):
                     self.guard.oom_recoveries += 1
                     chunks_to_try *= 2
                     self.optimizer.zero_grad(set_to_none=True)
@@ -853,8 +907,9 @@ class Engine:
             if (mixup_a > 0 or cutmix_a > 0) and isinstance(batch, (tuple, list)) and len(batch) >= 2:
                 x, y = batch[0], batch[1]
                 num_cls = None
-                if hasattr(self.model, "get_classifier"):
-                    clf = self.model.get_classifier()
+                get_clf_fn = getattr(self.model, "get_classifier", None)
+                if callable(get_clf_fn):
+                    clf = get_clf_fn()
                     num_cls = getattr(clf, "out_features", None)
                 if num_cls is None:
                     linears = [m for m in self.model.modules() if isinstance(m, nn.Linear)]
@@ -890,7 +945,12 @@ class Engine:
             if (batch_idx + 1) % max(1, self.config.log_every_n_steps) == 0:
                 pbar.set_postfix({"loss": f"{total_loss / batches_run:.4f}"})
 
-            if val_every_n_batches and (batch_idx + 1) % val_every_n_batches == 0 and (batch_idx + 1) < steps_per_epoch:
+            if (
+                val_loader is not None
+                and val_every_n_batches
+                and (batch_idx + 1) % val_every_n_batches == 0
+                and (batch_idx + 1) < steps_per_epoch
+            ):
                 v_loss, v_metrics = self._validate(val_loader)
                 self.callbacks.on_validation_end(self, {"val_loss": v_loss, **v_metrics})
                 self.model.train()
@@ -993,7 +1053,7 @@ class Engine:
             metric_value=metric_value,
         )
 
-        safe_cfg = {}
+        safe_cfg: Dict[str, Any] = {}
         for k, v in self.config.to_dict().items():
             if isinstance(v, (str, int, float, bool, type(None), dict)):
                 safe_cfg[k] = v

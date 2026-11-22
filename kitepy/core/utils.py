@@ -158,15 +158,27 @@ def get_head_parameter_names(model: nn.Module) -> Set[str]:
 
 
 def get_module_blocks(model: nn.Module) -> List[nn.Module]:
-    """Extract ordered logical layer/block modules for gradual unfreezing."""
-    # Unwrap CustomModelWrapper if present
+    """Extract ordered logical backbone blocks/layers for gradual unfreezing (excludes head/empty layers)."""
     target = getattr(model, "model", model)
+    head_names = get_head_parameter_names(target)
+    head_param_ids = {
+        id(p) for n, p in target.named_parameters() if n in head_names
+    }
+
     blocks: List[nn.Module] = []
     for child in target.children():
         if isinstance(child, (nn.Sequential, nn.ModuleList)) and len(child) > 0:
-            blocks.extend(list(child.children()))
+            items = list(child.children())
         else:
-            blocks.append(child)
+            items = [child]
+
+        for mod in items:
+            params = list(mod.parameters())
+            if not params:
+                continue  # Skip parameterless modules (Identity, Dropout, Pooling)
+            if all(id(p) in head_param_ids for p in params):
+                continue  # Skip classifier head (already trainable)
+            blocks.append(mod)
     return blocks
 
 
@@ -240,30 +252,35 @@ def build_parameter_groups(
 # ============================================================================
 
 class ModelEMA:
-    """Maintains an exponential moving average of model weights."""
+    """Maintains an exponential moving average of model parameters with warmup decay."""
 
     def __init__(self, model: nn.Module, decay: float = 0.9999):
         self.decay = decay
+        self.num_updates = 0
         self.shadow = deepcopy(model).eval()
         for p in self.shadow.parameters():
             p.requires_grad_(False)
 
     @torch.no_grad()
     def update(self, model: nn.Module):
+        self.num_updates += 1
+        d = min(self.decay, (1.0 + self.num_updates) / (10.0 + self.num_updates))
+        param_names = {n for n, _ in model.named_parameters()}
         msd = model.state_dict()
         for k, v in self.shadow.state_dict().items():
             if k in msd:
                 model_v = msd[k].detach().to(v.device)
-                if v.dtype.is_floating_point:
-                    v.mul_(self.decay).add_(model_v, alpha=1.0 - self.decay)
+                if k in param_names and v.dtype.is_floating_point:
+                    v.mul_(d).add_(model_v, alpha=1.0 - d)
                 else:
                     v.copy_(model_v)
 
     def state_dict(self) -> Dict[str, Any]:
-        return {"decay": self.decay, "shadow": self.shadow.state_dict()}
+        return {"decay": self.decay, "num_updates": self.num_updates, "shadow": self.shadow.state_dict()}
 
     def load_state_dict(self, state: Dict[str, Any]):
         self.decay = state.get("decay", self.decay)
+        self.num_updates = state.get("num_updates", 0)
         if "shadow" in state:
             self.shadow.load_state_dict(state["shadow"])
 

@@ -23,9 +23,11 @@ def test_vit_freeze_backbone_freezes_mlp_fc_layers():
     assert all("head" in n for n in trainable_names)
     assert not any("mlp.fc" in n for n in trainable_names)
 
-    # Gradual unfreeze last block + full unfreeze
+    # Gradual unfreeze last block must unfreeze backbone transformer block weights, not just head
+    before_unfreeze = sum(p.numel() for p in vit.model.parameters() if p.requires_grad)
     vit.unfreeze(layers=1)
-    assert sum(p.requires_grad for p in vit.model.parameters()) >= 2
+    after_unfreeze = sum(p.numel() for p in vit.model.parameters() if p.requires_grad)
+    assert after_unfreeze > before_unfreeze
 
     vit.unfreeze()
     assert all(p.requires_grad for p in vit.model.parameters())
