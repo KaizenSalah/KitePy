@@ -33,6 +33,7 @@ class SyntheticDataset(Dataset):
         in_channels: int = 3,
         num_classes: int = 10,
         transform=None,
+        task: str = "classification",
     ):
         self.num_samples = num_samples
         self.img_size = img_size
@@ -41,7 +42,15 @@ class SyntheticDataset(Dataset):
         self.transform = transform
 
         self.data = torch.randn(num_samples, in_channels, img_size, img_size)
-        self.targets = torch.randint(0, num_classes, (num_samples,))
+        task_l = (task or "classification").lower()
+        if task_l == "multilabel":
+            self.targets = torch.randint(0, 2, (num_samples, num_classes)).float()
+        elif task_l == "binary":
+            self.targets = torch.randint(0, 2, (num_samples,))
+        elif task_l == "regression":
+            self.targets = torch.randn(num_samples)
+        else:
+            self.targets = torch.randint(0, max(1, num_classes), (num_samples,))
 
     def __len__(self):
         return self.num_samples
@@ -162,14 +171,14 @@ def _load_custom_folder(
         pin_memory=train_config.pin_memory,
         drop_last=data_config.drop_last,
     )
-    val_loader = DataLoader(
+    val_loader: Optional[DataLoader] = DataLoader(
         val_dataset,
         batch_size=bs,
         shuffle=False,
         num_workers=train_config.num_workers,
         pin_memory=train_config.pin_memory,
     ) if val_dataset is not None else None
-    test_loader = DataLoader(
+    test_loader: Optional[DataLoader] = DataLoader(
         test_dataset,
         batch_size=bs,
         shuffle=False,
@@ -295,29 +304,31 @@ def load_vision_data_with_meta(
             val_dataset = SyntheticDetectionDataset(
                 num_samples=max(8, bs), img_size=sz, in_channels=in_channels, num_classes=num_classes
             )
-            train_loader = DataLoader(
+            det_train_loader = DataLoader(
                 train_dataset, batch_size=bs, shuffle=data_config.shuffle,
                 num_workers=train_config.num_workers, pin_memory=train_config.pin_memory,
                 collate_fn=detection_collate_fn,
             )
-            val_loader = DataLoader(
+            det_val_loader = DataLoader(
                 val_dataset, batch_size=bs, shuffle=False,
                 num_workers=train_config.num_workers, pin_memory=train_config.pin_memory,
                 collate_fn=detection_collate_fn,
             )
-            return train_loader, val_loader, None, metadata
+            return det_train_loader, det_val_loader, None, metadata
         else:
             train_dataset = SyntheticDataset(
                 num_samples=128,
                 img_size=target_img_size,
                 in_channels=in_channels,
                 num_classes=num_classes,
+                task=task_name,
             )
             val_dataset = SyntheticDataset(
                 num_samples=max(32, bs * 2),
                 img_size=target_img_size,
                 in_channels=in_channels,
                 num_classes=num_classes,
+                task=task_name,
             )
     else:
         raise ValueError(
@@ -333,14 +344,14 @@ def load_vision_data_with_meta(
         pin_memory=train_config.pin_memory,
         drop_last=data_config.drop_last,
     )
-    val_loader = DataLoader(
+    val_loader: Optional[DataLoader] = DataLoader(
         val_dataset,
         batch_size=bs,
         shuffle=False,
         num_workers=train_config.num_workers,
         pin_memory=train_config.pin_memory,
     ) if val_dataset is not None else None
-    test_loader = DataLoader(
+    test_loader: Optional[DataLoader] = DataLoader(
         test_dataset,
         batch_size=bs,
         shuffle=False,
@@ -364,7 +375,13 @@ def load_vision_data(
     return train_l, val_l, test_l
 
 
-def _load_hf_vision_dataset(dataset_id: str, train_transform, val_transform, bs: int, train_config: TrainingConfig):
+def _load_hf_vision_dataset(
+    dataset_id: str,
+    train_transform,
+    val_transform,
+    bs: int,
+    train_config: TrainingConfig,
+) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader], Dict[str, Any]]:
     """Load an image classification dataset from HuggingFace Hub."""
     try:
         from datasets import load_dataset
@@ -398,7 +415,7 @@ def _load_hf_vision_dataset(dataset_id: str, train_transform, val_transform, bs:
         _HFImageDataset(train_split, train_transform),
         batch_size=bs, shuffle=True, num_workers=train_config.num_workers, pin_memory=train_config.pin_memory,
     )
-    val_loader = DataLoader(
+    val_loader: Optional[DataLoader] = DataLoader(
         _HFImageDataset(val_split, val_transform),
         batch_size=bs, shuffle=False, num_workers=train_config.num_workers, pin_memory=train_config.pin_memory,
     ) if val_split is not None else None

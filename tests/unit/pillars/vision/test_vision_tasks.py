@@ -27,6 +27,11 @@ def test_vision_binary_multilabel_and_regression(tmp_path):
     m_reg.train(reg_loader, epochs=1, num_workers=0, checkpoint_dir=str(tmp_path), save_every_n_epochs=0)
     assert "train_mae" in m_reg.training_history[-1]
 
+    # Synthetic multi-label & binary & regression must work directly with data="synthetic"
+    syn_ml = Vision(task="multilabel", model="resnet18", num_classes=4)
+    syn_ml.train("synthetic", epochs=1, img_size=32, batch_size=8, fast_dev_run=True, num_workers=0, save_every_n_epochs=0)
+    assert syn_ml.is_trained
+
 
 def test_vision_segmentation_and_detection(tmp_path):
     # Semantic Segmentation (U-Net)

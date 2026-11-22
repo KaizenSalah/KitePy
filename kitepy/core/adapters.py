@@ -8,7 +8,7 @@ Decouples the universal Engine & BaseModel from any specific modality or task.
 
 from collections.abc import Mapping
 import math
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple, Type, cast
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -181,10 +181,17 @@ class MultiLabelClassificationAdapter(TaskAdapter):
 
     def forward_and_loss(self, model, batch, criterion, engine=None):
         inputs, targets = self.unpack_batch(batch)
-        outputs = model(**inputs) if isinstance(inputs, dict) else model(inputs)
+        outputs = model(**inputs) if isinstance(inputs, Mapping) else model(inputs)
         logits = getattr(outputs, "logits", outputs)
-        loss = criterion(logits, targets.float())
-        return loss, logits, targets
+        if targets.ndim == 1 and logits.ndim == 2:
+            targets_f = F.one_hot(
+                targets.long().clamp(0, max(0, logits.size(-1) - 1)),
+                num_classes=logits.size(-1),
+            ).float()
+        else:
+            targets_f = targets.float()
+        loss = criterion(logits, targets_f)
+        return loss, logits, targets_f
 
     def compute_batch_metrics(self, outputs, targets, loss_value, batch):
         preds = (torch.sigmoid(outputs) >= 0.5).float()
@@ -475,7 +482,7 @@ class CustomStepAdapter(TaskAdapter):
         return res
 
 
-ADAPTER_REGISTRY: Dict[str, type] = {
+ADAPTER_REGISTRY: Dict[str, Type[TaskAdapter]] = {
     "classification": ClassificationAdapter,
     "binary": BinaryClassificationAdapter,
     "multilabel": MultiLabelClassificationAdapter,
@@ -541,8 +548,10 @@ def register_pillar(
 def get_pillar_data_loader(modality: str) -> Optional[Callable]:
     """Retrieve registered data loader for a modality."""
     entry = _PILLAR_REGISTRY.get(modality)
-    if entry and entry.get("data_loader") is not None:
-        return entry["data_loader"]
+    if entry is not None:
+        loader = entry.get("data_loader")
+        if callable(loader):
+            return cast(Callable, loader)
     return None
 
 
