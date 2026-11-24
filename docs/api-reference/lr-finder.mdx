@@ -1,0 +1,60 @@
+---
+title: 'LRFinder'
+description: 'API reference for LRFinder learning rate range test (kitepy.core.lr_finder)'
+icon: 'magnifying-glass-chart'
+---
+
+```python
+from kitepy import LRFinder
+```
+
+## Constructor
+
+```python
+LRFinder(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    device: torch.device,
+    adapter: Optional[TaskAdapter] = None,
+)
+```
+
+Snapshots `model.state_dict()` and `optimizer.state_dict()` via `deepcopy` on construction (`adapter` defaults to `ClassificationAdapter()`).
+
+---
+
+## Methods
+
+### `find()`
+
+```python
+finder.find(
+    train_loader: DataLoader,
+    min_lr: float = 1e-7,
+    max_lr: float = 10.0,
+    num_steps: int = 100,
+    beta: float = 0.98,
+) -> Tuple[list, list]
+```
+
+- Raises `ValueError` if `train_loader` yields 0 batches.
+- Sweeps `np.geomspace(min_lr, max_lr, max(2, num_steps))`, cycling `train_loader` if shorter than `num_steps`.
+- Stops early after `i > 10` if smoothed loss `> 4 * best_loss` or `NaN`.
+- Always restores initial model & optimizer state in `finally`. Returns `(lrs, losses)`.
+
+### `suggest_lr()`
+
+```python
+finder.suggest_lr(skip_start: int = 10, skip_end: int = 5) -> float
+```
+
+Computes steepest negative loss gradient index minus 3 (or `argmin - 1` when total points `<= skip_start + skip_end + 2`). Raises `RuntimeError` if `find()` has not been run.
+
+### `plot()`
+
+```python
+finder.plot(save_path: Optional[str] = None)
+```
+
+Plots LR (log scale) vs loss using `matplotlib` with a vertical marker line at `suggest_lr()`.

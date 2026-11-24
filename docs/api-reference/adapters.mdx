@@ -1,0 +1,87 @@
+---
+title: 'Adapters & Registry'
+description: 'API reference for TaskAdapter, all 11 adapters, ADAPTER_REGISTRY, and Pillar Registry'
+icon: 'diagram-project'
+---
+
+```python
+from kitepy import (
+    TaskAdapter,
+    ClassificationAdapter,
+    BinaryClassificationAdapter,
+    MultiLabelClassificationAdapter,
+    RegressionAdapter,
+    CausalLMAdapter,
+    SequenceClassificationAdapter,
+    ContrastiveAdapter,
+    GenerativeAdapter,
+    SegmentationAdapter,
+    DetectionAdapter,
+    CustomStepAdapter,
+    ADAPTER_REGISTRY,
+    get_adapter,
+    register_pillar,
+)
+from kitepy.core.adapters import move_to_device, infer_batch_size, get_pillar_data_loader
+```
+
+---
+
+## `TaskAdapter` Contract
+
+```python
+class TaskAdapter:
+    task_name: str = "generic"
+    primary_metric: str = "acc"
+
+    def prepare_batch(self, batch: Any, device: torch.device) -> Any
+    def unpack_batch(self, batch: Any) -> Tuple[Any, Any]
+    def forward_and_loss(self, model: nn.Module, batch: Any, criterion: nn.Module, engine: Optional[Any] = None) -> Tuple[torch.Tensor, Any, Any]
+    def compute_batch_metrics(self, outputs: Any, targets: Any, loss_value: float, batch: Any) -> Dict[str, float]
+    def finalize_epoch_metrics(self, totals: Dict[str, float], num_batches: int) -> Dict[str, float]
+    def predict_step(self, model: nn.Module, inputs: Any, device: torch.device) -> Any
+```
+
+---
+
+## Registered Adapters (`ADAPTER_REGISTRY`)
+
+- **`"classification"`** → `ClassificationAdapter`
+- **`"binary"`** → `BinaryClassificationAdapter`
+- **`"multilabel"`** → `MultiLabelClassificationAdapter`
+- **`"regression"`** → `RegressionAdapter` (`mae`, `rmse`)
+- **`"causal_lm"`** → `CausalLMAdapter` (`perplexity`)
+- **`"sequence_classification"`** → `SequenceClassificationAdapter` (`acc`)
+- **`"contrastive"`** → `ContrastiveAdapter` (`acc`)
+- **`"generative"`** → `GenerativeAdapter` (`recon_loss`)
+- **`"segmentation"`** → `SegmentationAdapter` (`pixel_acc`, `miou`)
+- **`"detection"`** → `DetectionAdapter` (`avg_detections`)
+- Custom callable hook → `CustomStepAdapter(step_fn)` (created automatically when `train_step` is supplied)
+
+---
+
+## Registry & Device Helpers
+
+### `get_adapter()`
+
+```python
+get_adapter(
+    task_or_adapter: Optional[Any] = None,
+    modality: str = "vision",
+    train_step: Optional[Callable] = None,
+) -> TaskAdapter
+```
+
+### `register_pillar()` & `get_pillar_data_loader()`
+
+```python
+register_pillar(name: str, data_loader: Optional[Callable] = None, default_task: str = "classification")
+get_pillar_data_loader(modality: str) -> Optional[Callable]
+```
+
+### `move_to_device()` & `infer_batch_size()`
+
+```python
+move_to_device(obj: Any, device: torch.device) -> Any   # Recursively handles Tensors, Mapping, tuple, list
+infer_batch_size(batch: Any) -> int                     # Extracts leading dimension cleanly from tensors/mappings/tuples
+```

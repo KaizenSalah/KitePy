@@ -1,182 +1,94 @@
 ---
 title: 'Installation'
-description: 'Install kitepy on your system'
+description: 'Install KitePy, optional pillar extras, and verify your GPU environment'
 icon: 'download'
 ---
 
 ## Requirements
 
-kitepy requires:
-- **Python**: 3.8 or higher
-- **PyTorch**: 2.0.0 or higher
-- **timm**: 0.9.0 or higher (for vision models)
+Declared in `pyproject.toml`:
+
+- **Python**: `>= 3.8` (CI tests Python `3.10`, `3.11`, `3.12`)
+- **Core dependencies**:
+  - `torch >= 2.0.0`
+  - `torchvision >= 0.15.0`
+  - `timm >= 0.9.0`
+  - `pyyaml >= 6.0`
+  - `numpy >= 1.21.0`
+
+---
 
 ## Installation Methods
 
-### Basic Install (Recommended)
-
-Install the minimal version with CNN support:
+### Standard Install (PyPI)
 
 ```bash
 pip install kitepy
 ```
 
-### With GPU Support
+### Optional Dependency Extras
 
-Make sure you have CUDA installed, then:
+Choose the optional extras matching your workflow (defined in `pyproject.toml`):
+
+| Extra | Command | Included Packages |
+|-------|---------|-------------------|
+| **Language / HF** | `pip install "kitepy[llm]"` | `transformers>=4.30.0`, `datasets>=2.12.0`, `tokenizers>=0.13.0` |
+| **Distributed** | `pip install "kitepy[distributed]"` | `deepspeed>=0.9.0`, `accelerate>=0.20.0` |
+| **Experiment Tracking** | `pip install "kitepy[tracking]"` | `wandb>=0.15.0`, `tensorboard>=2.13.0` |
+| **Advanced GPU** | `pip install "kitepy[advanced]"` | `flash-attn>=2.0.0`, `bitsandbytes>=0.41.0` |
+| **Development** | `pip install "kitepy[dev]"` | `pytest>=7.3.0`, `pytest-cov>=4.1.0`, `black>=23.3.0`, `flake8>=6.0.0`, `mypy>=1.3.0`, `isort>=5.12.0` |
+| **All Extras** | `pip install "kitepy[all]"` | Combines `llm`, `distributed`, and `tracking` packages |
+
+### Additional Lazy Optional Packages
+
+Certain features import optional libraries at call time when invoked:
+
+- **SafeTensors bundles** (`safe=True`, `format="safetensors"`): `pip install safetensors`
+- **Tabular CSV loading**: `pip install pandas`
+- **LoRA fine-tuning via HuggingFace PEFT** (`lora=True` falls back to built-in `LoRALinear` if absent): `pip install peft`
+- **FastAPI serving** (`.to_fastapi()`, `kitepy serve`): `pip install fastapi uvicorn`
+- **Optuna hyperparameter search** (`.tune()`): `pip install optuna`
+- **HuggingFace Hub upload** (`.push_to_hub()`): `pip install huggingface_hub`
+- **Non-WAV audio formats** (`.flac`, `.ogg`, `.mp3`): `pip install torchaudio` (built-in Python `wave` handles `.wav` with zero extra deps)
+- **Diffusion UNet preset** (`Generative("diffusers_unet")`): `pip install diffusers`
+- **ONNX export / plotting / Lion optimizer**: `onnx`, `matplotlib`, `lion-pytorch`
+
+### Install From Source
 
 ```bash
-# PyTorch with CUDA 11.8
-pip install kitepy torch torchvision --extra-index-url https://download.pytorch.org/whl/cu118
-
-# PyTorch with CUDA 12.1
-pip install kitepy torch torchvision --extra-index-url https://download.pytorch.org/whl/cu121
-```
-
-### Advanced Installation
-
-Install optional features (Note: LLM/Distributed features are prepared but modules are coming soon):
-
-```bash
-# All current vision features
-pip install kitepy[vision]
-
-# Full install including prepared dependencies for upcoming LLM module
-pip install kitepy[all]
-```
-
-### Development Install
-
-For contributing or modifying kitepy:
-
-```bash
-git clone https://github.com/ExtraKaizen/kitepy
+git clone https://github.com/KaizenSalah/kitepy.git
 cd kitepy
-pip install -e .
+pip install -e ".[dev]"
 ```
+
+### PyTorch With CUDA
+
+Install the CUDA build of PyTorch matching your driver before or alongside `kitepy`:
+
+```bash
+pip install kitepy torch torchvision --index-url https://download.pytorch.org/whl/cu121
+```
+
+---
 
 ## Verify Installation
 
-Run this to verify everything is working:
+From the CLI:
+
+```bash
+kitepy doctor
+```
+
+Or in Python:
 
 ```python
+import kitepy
 from kitepy import CNN, print_device_info, print_version_info
 
-# Check versions
+print("KitePy version:", kitepy.__version__)
 print_version_info()
-
-# Check device (CPU/GPU)
 print_device_info()
 
-# Quick test
-model = CNN("resnet18")
-model.train("synthetic", epochs=1, fast_dev_run=True)
+# Zero-download 1-batch sanity check
+CNN("resnet18").train("synthetic", epochs=1, fast_dev_run=True, save_every_n_epochs=0)
 ```
-
-You should see output like:
-
-```
-========================================
-📦 Package Versions
-========================================
-  kitepy:      0.1.0
-  PyTorch:    2.1.0
-  timm:       0.9.12
-  CUDA:       12.1
-
-========================================
-🖥️  Device Information
-========================================
-  Available:  cuda:0 (NVIDIA RTX 4090)
-  Memory:     24.0 GB
-
-✓ Created CNN model: resnet18
-  - Architecture: resnet
-  - Parameters: 11,689,512
-```
-
-## Optional Dependencies
-
-### For Vision Transformers
-
-```bash
-pip install timm>=0.9.0
-```
-
-### For Data Augmentation (RandAugment, TrivialAugment)
-
-```bash
-pip install torchvision>=0.15.0
-```
-
-### For Logging (Weights & Biases)
-
-```bash
-pip install wandb
-```
-
-### For Logging (TensorBoard)
-
-```bash
-pip install tensorboard
-```
-
-### For Hyperparameter Tuning
-
-```bash
-pip install optuna
-```
-
-### For Model Export (ONNX)
-
-```bash
-pip install onnx onnxruntime
-```
-
-## Troubleshooting
-
-<AccordionGroup>
-  <Accordion title="CUDA not found">
-    Make sure you have the correct CUDA version installed. Check with:
-    ```bash
-    nvidia-smi
-    ```
-    Then install PyTorch for your CUDA version from [pytorch.org](https://pytorch.org/get-started/locally/).
-  </Accordion>
-
-  <Accordion title="timm not found">
-    Install timm manually:
-    ```bash
-    pip install timm>=0.9.0
-    ```
-  </Accordion>
-
-  <Accordion title="Out of memory errors">
-    Try reducing batch size:
-    ```python
-    model.train("cifar10", batch_size=16)
-    ```
-    Or enable gradient checkpointing:
-    ```python
-    model.train("cifar10", gradient_checkpointing=True)
-    ```
-  </Accordion>
-
-  <Accordion title="Slow training on CPU">
-    Training on CPU is significantly slower. If you don't have a GPU, use `fast_dev_run=True` for quick tests:
-    ```python
-    model.train("cifar10", fast_dev_run=True)
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Quickstart" icon="bolt" href="/quickstart">
-    Train your first model
-  </Card>
-  <Card title="Core Concepts" icon="book" href="/concepts/philosophy">
-    Understand the design
-  </Card>
-</CardGroup>

@@ -1,0 +1,62 @@
+---
+title: 'CLI Reference'
+description: 'API reference for the kitepy console command (kitepy/cli.py)'
+icon: 'terminal'
+---
+
+KitePy registers the `kitepy` console entrypoint (`kitepy.cli:main`).
+
+---
+
+## Subcommands
+
+### `kitepy doctor`
+
+Prints package/dependency versions and CPU/CUDA/MPS device info:
+
+```bash
+kitepy doctor
+```
+
+### `kitepy models` & `kitepy datasets`
+
+Print registered presets as formatted JSON:
+
+```bash
+kitepy models all        # or: cnn, transformer, llm, vlm, audio, tabular, generative, rnn
+kitepy datasets all      # or: vision, language, multimodal
+```
+
+### `kitepy train`
+
+```bash
+kitepy train <config.yaml> [--data DATA] [--epochs EPOCHS] [--modality MODALITY] [--model MODEL] [--save OUT_PATH]
+```
+
+- `--modality` defaults to `"vision"` (`language` -> `LLM`, `multimodal` -> `VLM`, `audio` -> `Audio`, `tabular` -> `Tabular`, `generative` -> `Generative`, `vit/deit/swin` -> `Transformer`, otherwise `CNN`).
+- `--model` defaults to `"resnet18"`.
+- `--save` saves the trained model cleanly via `.save(args.save)`.
+
+### `kitepy predict`
+
+```bash
+kitepy predict <checkpoint> <input> [--modality MODALITY] [--top-k 5]
+```
+
+Loads checkpoint (redirecting loading logs to `stderr`) and prints strict JSON predictions to `stdout` (`--top-k` defaults to `5`).
+
+### `kitepy export`
+
+```bash
+kitepy export <checkpoint> <output> [--modality MODALITY] [--format auto]
+```
+
+Exports via `model.export(args.output, format=args.format)` (`"auto"`, `"onnx"`, `"torchscript"`, `"safetensors"`).
+
+### `kitepy serve`
+
+```bash
+kitepy serve <checkpoint> [--modality MODALITY] [--host 127.0.0.1] [--port 8000]
+```
+
+Loads checkpoint and launches `uvicorn.run(model.to_fastapi(), host=args.host, port=args.port)`.

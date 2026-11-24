@@ -1,229 +1,186 @@
 ---
-title: 'ModelConfig'
-description: 'API reference for model configuration classes'
+title: 'Model Configs & ExperimentConfig'
+description: 'API reference for BaseConfig, ModelConfig, all 8 pillar configs, ExperimentConfig, and merge helpers'
 icon: 'cubes'
 ---
 
-## Overview
+## `BaseConfig` & Helpers
 
-kitepy provides specialized configuration classes for different model architectures.
+Every config dataclass inherits from `BaseConfig`:
 
-```python
-from kitepy import CNNConfig, TransformerConfig
-```
+- `to_dict() -> Dict[str, Any]`
+- `to_yaml(path: str)` / `to_json(path: str)` (atomic writes)
+- `field_names() -> set`
+- `from_dict(config_dict, strict: bool = True)` (typo suggestions with `strict=True`)
+- `from_yaml(path: str, strict: bool = True)` / `from_json(path: str, strict: bool = True)`
 
----
+### Helpers
 
-## CNNConfig
-
-Configuration for convolutional neural networks.
-
-### Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `arch` | `str` | `"resnet"` | Architecture family |
-| `depth` | `int` | `18` | Model depth |
-| `num_classes` | `int` | `1000` | Number of output classes |
-| `in_channels` | `int` | `3` | Input channels |
-| `pretrained` | `bool` | `False` | Use pretrained weights |
-| `dropout` | `float` | `0.0` | Dropout rate |
-| `drop_path` | `float` | `0.0` | Drop path rate |
-| `width_multiplier` | `float` | `1.0` | Width multiplier |
-
-### Example
-
-```python
-from kitepy import CNNConfig, CNN
-
-config = CNNConfig(
-    arch="resnet",
-    depth=50,
-    num_classes=100,
-    pretrained=True,
-    dropout=0.2,
-)
-
-model = CNN("resnet50", config=config)
-```
+- `merge_configs(default, preset=None, user_config=None, strict=False, **kwargs)` — priority: `kwargs > user_config > preset > default`.
+- `split_kwargs(kwargs, model_config_cls) -> (model_kw, data_kw, train_kw, unknown_kw)`
+- `validate_config(config)`
+- `auto_batch_size(model_size: str, available_memory_gb: float) -> int` (`small=128`, `base=64`, `large=32`, `xlarge=16` scaled by `gb / 24.0`)
+- `auto_learning_rate(batch_size: int, base_lr: float = 1e-3) -> float` (`base_lr * (batch_size / 256)`)
 
 ---
 
-## TransformerConfig
+## `ModelConfig` (Shared Base)
 
-Configuration for Vision Transformers.
-
-### Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `arch` | `str` | `"vit"` | Architecture: "vit", "deit", "swin" |
-| `img_size` | `int` | `224` | Input image size |
-| `patch_size` | `int` | `16` | Patch size |
-| `in_channels` | `int` | `3` | Input channels |
-| `embed_dim` | `int` | `768` | Embedding dimension |
-| `depth` | `int` | `12` | Number of transformer blocks |
-| `num_heads` | `int` | `12` | Number of attention heads |
-| `mlp_ratio` | `float` | `4.0` | MLP hidden dim ratio |
-| `qkv_bias` | `bool` | `True` | Bias in QKV projection |
-| `num_classes` | `int` | `1000` | Number of output classes |
-| `pretrained` | `bool` | `False` | Use pretrained weights |
-| `drop_rate` | `float` | `0.0` | Dropout rate |
-| `attn_drop_rate` | `float` | `0.0` | Attention dropout rate |
-| `drop_path_rate` | `float` | `0.0` | Stochastic depth rate |
-
-### Example
-
-```python
-from kitepy import TransformerConfig, Transformer
-
-config = TransformerConfig(
-    arch="vit",
-    img_size=384,
-    patch_size=16,
-    embed_dim=768,
-    depth=12,
-    num_heads=12,
-    num_classes=100,
-    pretrained=True,
-    drop_path_rate=0.1,
-)
-
-model = Transformer("vit_base", config=config)
-```
+| Field | Type | Default |
+|---|---|---|
+| `pretrained` | `bool` | `False` |
+| `pretrained_path` | `Optional[str]` | `None` |
+| `freeze_backbone` | `bool` | `False` |
+| `freeze_embeddings` | `bool` | `False` |
+| `dropout` | `float` | `0.0` |
+| `drop_path` | `float` | `0.0` |
 
 ---
 
-## LLMConfig (Coming Soon)
+## `CNNConfig` & `TransformerConfig`
 
-Configuration for language models.
+<CodeGroup>
+```python CNNConfig Fields
+arch: str = "resnet"
+depth: Union[int, str] = 18
+width_multiplier: float = 1.0
+variant: Optional[str] = None
+num_classes: int = 1000
+in_channels: int = 3
+img_size: int = 224
+groups: int = 1
+base_width: int = 64
+global_pool: str = "avg"
+drop_rate: float = 0.0
+drop_path_rate: float = 0.0
+```
 
-### Parameters (Preview)
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `arch` | `str` | `"gpt"` | Architecture: "gpt", "llama", "mistral" |
-| `n_layers` | `int` | `12` | Number of transformer layers |
-| `d_model` | `int` | `768` | Model dimension |
-| `n_heads` | `int` | `12` | Number of attention heads |
-| `d_ff` | `int` | `3072` | Feed-forward dimension |
-| `vocab_size` | `int` | `50257` | Vocabulary size |
-| `context_length` | `int` | `1024` | Context length |
-| `norm_type` | `str` | `"layernorm"` | Normalization type |
-| `activation` | `str` | `"gelu"` | Activation function |
-| `pos_encoding` | `str` | `"learned"` | Positional encoding type |
+```python TransformerConfig Fields
+arch: str = "vit"
+img_size: int = 224
+patch_size: int = 16
+in_channels: int = 3
+embed_dim: int = 768
+depth: Union[int, List[int]] = 12
+depths: Optional[List[int]] = None
+num_heads: int = 12
+mlp_ratio: float = 4.0
+num_classes: int = 1000
+drop_rate: float = 0.0
+attn_drop_rate: float = 0.0
+drop_path_rate: float = 0.1
+pos_embed_type: str = "learned"
+```
+</CodeGroup>
 
 ---
 
-## VLMConfig (Coming Soon)
+## `LLMConfig`, `VLMConfig`, `AudioConfig`, `TabularConfig`, `GenerativeConfig`, `RNNConfig`
 
-Configuration for vision-language models.
+<CodeGroup>
+```python LLMConfig
+arch: str = "gpt"
+model_type: str = "causal_lm"   # "causal_lm", "classification", "masked_lm", "seq2seq"
+n_layers: int = 4
+d_model: int = 256
+n_heads: int = 4
+d_ff: int = 1024
+vocab_size: int = 50257
+context_length: int = 512
+num_labels: int = 2
+attention_type: str = "multihead"
+n_kv_heads: Optional[int] = None
+pos_encoding: str = "learned"
+norm_type: str = "layernorm"
+norm_eps: float = 1e-5
+activation: str = "gelu"
+dropout: float = 0.1
+attention_dropout: float = 0.1
+residual_dropout: float = 0.1
+bos_token_id: int = 1
+eos_token_id: int = 2
+pad_token_id: int = 0
+initializer_range: float = 0.02
+use_cache: bool = True
+tie_word_embeddings: bool = True
+rope_theta: float = 10000.0
+lora: bool = False
+lora_r: int = 8
+lora_alpha: int = 16
+lora_dropout: float = 0.05
+trust_remote_code: bool = False
+```
 
-### Parameters (Preview)
+```python VLMConfig & AudioConfig
+# VLMConfig
+arch: str = "clip"
+vision_model: str = "resnet18"
+text_model: str = "gpt2"
+vision_config: Optional[TransformerConfig] = None
+text_config: Optional[LLMConfig] = None
+fusion_type: str = "contrastive"
+projection_dim: int = 256
+img_size: int = 224
+vocab_size: int = 1000
+max_length: int = 64
+task: str = "contrastive"
+temperature: float = 0.07
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `arch` | `str` | `"clip"` | Architecture: "clip", "blip" |
-| `vision_model` | `str` | `"vit_base"` | Vision encoder |
-| `text_model` | `str` | `"gpt2"` | Text encoder |
-| `projection_dim` | `int` | `512` | Projection dimension |
-| `task` | `str` | `"contrastive"` | Task type |
+# AudioConfig
+arch: str = "audio_cnn"
+num_classes: int = 10
+in_channels: int = 1
+sample_rate: int = 16000
+n_mels: int = 64
+num_frames: int = 128
+hidden_dim: int = 128
+```
+
+```python Tabular, Generative & RNNConfig
+# TabularConfig
+arch: str = "tabular_resnet"
+input_dim: int = 16
+num_classes: int = 2
+hidden_dims: List[int] = [128, 128, 64]
+dropout: float = 0.1
+task: str = "classification"
+
+# GenerativeConfig
+arch: str = "vae"               # "vae" or "ddpm"
+in_channels: int = 3
+img_size: int = 32
+latent_dim: int = 64
+base_channels: int = 32
+timesteps: int = 200
+kl_weight: float = 0.001
+
+# RNNConfig
+rnn_type: str = "lstm"
+input_size: int = 768
+hidden_size: int = 256
+num_layers: int = 2
+dropout: float = 0.0
+bidirectional: bool = False
+num_classes: int = 1000
+```
+</CodeGroup>
+
+Registry lookup mapping: `MODEL_CONFIG_MAP = {"cnn": CNNConfig, "transformer": TransformerConfig, "llm": LLMConfig, "vlm": VLMConfig, "audio": AudioConfig, "tabular": TabularConfig, "generative": GenerativeConfig, "rnn": RNNConfig}`.
 
 ---
 
-## Common Methods
+## `ExperimentConfig`
 
-All config classes inherit from `BaseConfig` and share these methods:
+Combines `model: ModelConfig`, `training: TrainingConfig`, and `data: DataConfig`:
 
-### to_dict()
-
-Convert to dictionary:
-
-```python
-config = CNNConfig(num_classes=100)
-config_dict = config.to_dict()
-```
-
-### from_yaml() / to_yaml()
-
-Load/save from YAML:
-
-```python
-config = CNNConfig.from_yaml("model_config.yaml")
-config.to_yaml("model_config.yaml")
-```
-
-### from_json() / to_json()
-
-Load/save from JSON:
-
-```python
-config = CNNConfig.from_json("model_config.json")
-config.to_json("model_config.json")
-```
-
-### merge()
-
-Merge with another config:
-
-```python
-base_config = CNNConfig(num_classes=100)
-override = {"pretrained": True, "dropout": 0.2}
-merged = base_config.merge(override)
-```
-
----
-
-## File-Based Configuration
-
-### YAML Example
-
-```yaml model.yaml
-arch: resnet
-depth: 50
-num_classes: 100
-pretrained: true
-dropout: 0.2
-```
-
-```python
-config = CNNConfig.from_yaml("model.yaml")
-model = CNN("resnet50", config=config)
-```
-
-### JSON Example
-
-```json model.json
-{
-  "arch": "resnet",
-  "depth": 50,
-  "num_classes": 100,
-  "pretrained": true
-}
-```
-
-```python
-config = CNNConfig.from_json("model.json")
-```
-
----
-
-## Combining with TrainingConfig
-
-```python
-from kitepy import CNN, CNNConfig, TrainingConfig
-
-model_config = CNNConfig(
-    num_classes=100,
-    pretrained=True,
-)
-
-train_config = TrainingConfig(
-    epochs=50,
-    lr=0.001,
-    batch_size=128,
-)
-
-model = CNN("resnet50", config=model_config)
-model.train("cifar100", **train_config.to_dict())
-```
+| Field | Type | Default |
+|---|---|---|
+| `model` | `ModelConfig` | `CNNConfig()` |
+| `training` | `TrainingConfig` | `TrainingConfig()` |
+| `data` | `DataConfig` | `DataConfig()` |
+| `experiment_name` | `str` | `"default_experiment"` |
+| `tags` | `list` | `[]` |
+| `notes` | `str` | `""` |
+| `use_wandb` | `bool` | `False` |
+| `wandb_project` | `Optional[str]` | `None` |
+| `wandb_entity` | `Optional[str]` | `None` |

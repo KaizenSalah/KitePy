@@ -1,77 +1,71 @@
 ---
 title: 'Utilities'
-description: 'API reference for utility functions'
-icon: 'toolbox'
+description: 'API reference for device, reproducibility, parameter groups, ModelEMA, checkpoints, and memory helpers'
+icon: 'wrench'
 ---
-
-## Overview
-
-kitepy provides several utility functions.
 
 ```python
 from kitepy import (
-    print_version_info,
+    ModelEMA,
     print_device_info,
-    get_train_transforms,
-    get_val_transforms,
+    print_version_info,
+    set_seed,
+)
+from kitepy.core.utils import (
+    get_device,
+    get_num_gpus,
+    get_gpu_memory,
+    get_head_parameter_names,
+    get_module_blocks,
+    build_parameter_groups,
+    count_parameters,
+    get_model_size_mb,
+    print_model_summary,
+    get_checkpoint_path,
+    cleanup_old_checkpoints,
+    get_memory_usage,
+    clear_gpu_memory,
+    get_lr,
+    format_time,
 )
 ```
 
-## print_version_info()
+---
 
-Print package versions.
+## Device & Reproducibility
 
-```python
-print_version_info()
-```
+- **`get_device(device="auto") -> torch.device`**: Handles `"auto"` (`cuda` -> `mps` -> `cpu`), integer GPU index, `"cpu"`, `"cuda"`, `"mps"`.
+- **`get_num_gpus() -> int`**, **`get_gpu_memory(device=0) -> float`** (free GB)
+- **`print_device_info()`**, **`print_version_info()`**
+- **`set_seed(seed=42, deterministic=False)`**: Seeds `random`, `numpy`, `torch`, CUDA, and optionally enables deterministic algorithms + disables cuDNN benchmark.
 
-Output:
-```
-========================================
-📦 Package Versions
-========================================
-  kitepy:      0.1.0
-  PyTorch:    2.1.0
-  timm:       0.9.12
-  CUDA:       12.1
-```
+---
 
-## print_device_info()
+## Transfer Learning & Optimizer Groups
 
-Print device information.
+- **`get_head_parameter_names(model: nn.Module) -> Set[str]`**: Uses `timm` `.get_classifier()`, head attributes (`head`, `classifier`, `fc`, `lm_head`, `score`, `last_linear`), or trailing module prefix.
+- **`get_module_blocks(model: nn.Module) -> List[nn.Module]`**: Ordered backbone modules excluding head and parameterless layers.
+- **`build_parameter_groups(model, lr, weight_decay=0.01, backbone_lr_mult=None, layer_decay=None)`**: Creates parameter groups with automatic weight decay exclusion (`bias`, `norm`, `bn`, `ln`, `layernorm`, `rmsnorm`, `ndim <= 1`).
+
+---
+
+## `ModelEMA`
 
 ```python
-print_device_info()
+ema = ModelEMA(model: nn.Module, decay: float = 0.9999)
+ema.update(model)
+state = ema.state_dict()
+ema.load_state_dict(state)
 ```
 
-Output:
-```
-========================================
-🖥️  Device Information
-========================================
-  Available:  cuda:0 (NVIDIA RTX 4090)
-  Memory:     24.0 GB
-```
+Maintains a detached, frozen `deepcopy` shadow model updated with warmup decay `min(decay, (1 + n) / (10 + n))` on floating-point parameters and exact buffer copy (`running_mean`, `running_var`).
 
-## get_train_transforms()
+---
 
-Get training transforms.
+## Summaries, Checkpoints & Memory
 
-```python
-from kitepy import get_train_transforms
-
-transform = get_train_transforms(
-    img_size=224,
-    augmentation="randaugment"
-)
-```
-
-## get_val_transforms()
-
-Get validation transforms.
-
-```python
-from kitepy import get_val_transforms
-
-transform = get_val_transforms(img_size=224)
-```
+- `count_parameters(model, trainable_only=False) -> int`
+- `get_model_size_mb(model) -> float`, `print_model_summary(model)`
+- `get_checkpoint_path(checkpoint_dir, model_name, epoch, metric_name="loss", metric_value=0.0) -> str`
+- `cleanup_old_checkpoints(checkpoint_dir, keep_top_k=3, metric_name="loss", lower_is_better=True)`
+- `get_memory_usage() -> dict`, `clear_gpu_memory()`, `get_lr(optimizer) -> float`, `format_time(seconds) -> str`

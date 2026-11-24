@@ -1,0 +1,40 @@
+---
+title: 'Vision Segmentation & Detection'
+description: 'Semantic segmentation with SimpleUNet and object detection with TinyDetector or torchvision models'
+icon: 'eye'
+---
+
+## Semantic Segmentation (`SimpleUNet` & Save/Load)
+
+```python
+import torch
+from kitepy import Vision
+
+seg = Vision(task="segmentation", model="unet", num_classes=3)
+seg.train("synthetic", img_size=64, epochs=3, batch_size=8, save_every_n_epochs=0)
+
+# Task and num_classes=3 are preserved across SafeTensors save & reload
+seg.save("./artifacts/seg_unet.safetensors", safe=True)
+reloaded = Vision.load("./artifacts/seg_unet.safetensors")
+
+mask_logits = reloaded.predict(torch.randn(1, 3, 64, 64))
+print("Segmentation output:", mask_logits.shape)  # (1, 3, 64, 64)
+```
+
+---
+
+## Object Detection (`TinyDetector` & Torchvision)
+
+```python
+from kitepy import Vision
+
+# Lightweight smoke detector
+det = Vision(task="detection", model="tiny_detector", num_classes=4)
+det.train("synthetic", img_size=64, epochs=3, batch_size=4, save_every_n_epochs=0)
+
+preds = det.predict(torch.rand(1, 3, 64, 64))
+print(preds[0]["boxes"].shape, preds[0]["labels"], preds[0]["scores"])
+
+# For multi-object training, use torchvision detection architectures:
+# detector = Vision(task="detection", model="fasterrcnn_resnet50_fpn", num_classes=4, pretrained=True)
+```

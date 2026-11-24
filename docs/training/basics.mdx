@@ -1,395 +1,100 @@
 ---
 title: 'Training Basics'
-description: 'Learn how to train models with kitepy'
+description: 'Core training controls, loss functions, class balancing, validation cadence, and debugging flags'
 icon: 'graduation-cap'
 ---
 
 ## Overview
 
-kitepy handles the entire training loop for you. This page covers the essential training features.
+`BaseModel.train()` orchestrates config merging, data loading, model construction, and `Engine` execution, returning `self` for clean method chaining.
 
-## Basic Training
-
-The simplest training command:
-
-```python
+<CodeGroup>
+```python Minimal
 from kitepy import CNN
 
-model = CNN("resnet18")
-model.train("cifar10")
+CNN("resnet18").train("cifar10")
 ```
 
-This uses intelligent defaults:
-- 10 epochs
-- Batch size 32
-- AdamW optimizer
-- Cosine learning rate schedule
-- Mixed precision training (if GPU available)
-- Automatic checkpointing
+```python Full Training Controls
+from kitepy import CNN
 
-## Training Parameters
-
-Override any default:
-
-```python
+model = CNN("resnet50", pretrained=True)
 model.train(
-    data="cifar10",
-    
-    # Duration
-    epochs=50,
-    
-    # Batch size
-    batch_size=128,
-    
-    # Learning rate
-    lr=0.001,
-    
-    # Optimizer
-    optimizer="adamw",
-    weight_decay=0.05,
-    
-    # Scheduler
-    scheduler="cosine",
-    warmup_steps=500,
-)
-```
-
-## Epochs and Steps
-
-### Epoch-based Training
-
-```python
-model.train("cifar10", epochs=100)
-```
-
-### Step-based Training
-
-```python
-model.train("imagenet", max_steps=100000)  # Overrides epochs
-```
-
-## Batch Size
-
-### Simple Batch Size
-
-```python
-model.train("cifar10", batch_size=64)
-```
-
-### Gradient Accumulation
-
-Simulate larger batches with limited GPU memory:
-
-```python
-model.train("cifar10",
-    batch_size=32,
-    gradient_accumulation_steps=4,  # Effective batch size: 128
-)
-```
-
-This is especially useful for Vision Transformers and large models.
-
-## Learning Rate
-
-### Fixed Learning Rate
-
-```python
-model.train("cifar10", lr=0.001)
-```
-
-### Learning Rate Finding
-
-Find the optimal learning rate automatically:
-
-```python
-suggested_lr = model.find_lr("cifar10")
-print(f"Suggested LR: {suggested_lr}")  # e.g., 0.00234
-
-model.train("cifar10", lr=suggested_lr)
-```
-
-### Warmup
-
-Gradually increase learning rate at the start:
-
-```python
-model.train("imagenet",
-    lr=0.1,
-    warmup_steps=5000,  # Number of steps
-)
-
-# Or as fraction of total steps
-model.train("imagenet",
-    lr=0.1,
-    warmup_steps=0.1,  # First 10% of training
-)
-```
-
-## Optimizers
-
-### AdamW (Default)
-
-```python
-model.train("cifar10", optimizer="adamw")
-```
-
-### SGD with Momentum
-
-```python
-model.train("cifar10",
-    optimizer="sgd",
-    optimizer_kwargs={"momentum": 0.9}
-)
-```
-
-### Other Optimizers
-
-```python
-# Adam
-model.train("cifar10", optimizer="adam")
-
-# RMSprop
-model.train("cifar10", optimizer="rmsprop")
-
-# NAdam
-model.train("cifar10", optimizer="nadam")
-
-# RAdam
-model.train("cifar10", optimizer="radam")
-
-# Lion (requires pip install lion-pytorch)
-model.train("cifar10", optimizer="lion")
-```
-
-### Custom Optimizer
-
-```python
-import torch.optim as optim
-
-# Pass optimizer class
-model.train("cifar10", optimizer=optim.Adagrad)
-
-# Or optimizer instance
-optimizer = optim.SGD(model.model.parameters(), lr=0.01, momentum=0.9)
-model.train("cifar10", optimizer=optimizer)
-```
-
-## Learning Rate Schedulers
-
-### Cosine Annealing (Default)
-
-```python
-model.train("cifar10", scheduler="cosine")
-```
-
-### Linear Decay
-
-```python
-model.train("cifar10", scheduler="linear")
-```
-
-### Step Decay
-
-```python
-model.train("cifar10",
-    scheduler="step",
-    scheduler_kwargs={"step_size": 30, "gamma": 0.1}
-)
-```
-
-### OneCycle
-
-```python
-model.train("cifar10", scheduler="onecycle")
-```
-
-### Warmup + Cosine
-
-```python
-model.train("cifar10",
-    scheduler="warmup_cosine",
-    scheduler_kwargs={"warmup_steps": 1000}
-)
-```
-
-### No Scheduler
-
-```python
-model.train("cifar10", scheduler="none")
-```
-
-## Mixed Precision Training
-
-Automatically use mixed precision for faster training:
-
-```python
-model.train("cifar10", mixed_precision=True)  # Default on GPU
-```
-
-Options:
-- `True` or `"fp16"`: Use FP16 (default)
-- `"bf16"`: Use BFloat16 (better numerical stability)
-- `False` or `"fp32"`: Full precision
-
-## Gradient Clipping
-
-Prevent exploding gradients:
-
-```python
-model.train("cifar10", max_grad_norm=1.0)  # Default: 1.0
-```
-
-Set to 0 to disable:
-
-```python
-model.train("cifar10", max_grad_norm=0)
-```
-
-## Regularization
-
-### Weight Decay
-
-```python
-model.train("cifar10", weight_decay=0.01)
-```
-
-### Dropout
-
-```python
-model.train("cifar10", dropout=0.1)
-```
-
-### Label Smoothing
-
-```python
-model.train("cifar10", label_smoothing=0.1)
-```
-
-## Checkpointing
-
-### Automatic Checkpointing
-
-```python
-model.train("cifar10",
+    data="./my_dataset",
+    epochs=30,
+    batch_size=64,
+    gradient_accumulation_steps=2,
+    lr=3e-4,
+    loss="cross_entropy",
+    class_weights="balanced",
+    label_smoothing=0.05,
+    val_every_n_epochs=1,
+    val_check_interval=1.0,
+    save_every_n_epochs=1,
+    save_top_k=3,
     checkpoint_dir="./checkpoints",
-    save_every_n_epochs=5,  # Save every 5 epochs
-    save_top_k=3,           # Keep best 3 checkpoints
-)
-```
-
-### Resume Training
-
-```python
-model.train("cifar10", resume_from_checkpoint="./checkpoints/model_epoch5.pt")
-```
-
-## Early Stopping
-
-Stop training when validation loss stops improving:
-
-```python
-model.train("cifar10",
     early_stopping=True,
-    early_stopping_patience=5,      # Wait 5 epochs
-    early_stopping_min_delta=1e-4,  # Minimum improvement
+    early_stopping_patience=5,
+)
+```
+</CodeGroup>
+
+---
+
+## Duration & Batching
+
+- **Epoch-based**: `epochs=50` (default `10`).
+- **Step-based**: `max_steps=5000` stops cleanly once `global_step >= max_steps` (and auto-computes needed epochs if `max_epochs <= start_epoch`).
+- **Auto batch size**: `batch_size="auto"` selects batch size via `auto_batch_size("base", free_gb)` on CUDA or `32` on CPU.
+- **Gradient accumulation**: `gradient_accumulation_steps=4` scales loss by `1 / accum_steps` (handles remainder batches safely at epoch end and `max_steps`).
+
+---
+
+## Validation & Debugging Controls
+
+- **`val_every_n_epochs`**: Run validation every `N` epochs (always validates on the final epoch `epoch == max_epochs`).
+- **`val_check_interval`**: Float in `(0, 1.0)` triggers mid-epoch validation at fractional milestones; integer `> 0` runs validation every `N` training batches.
+- **`fast_dev_run=True`**: Forces `epochs=1` and stops training/validation loops after 1 batch for instant smoke testing.
+- **`overfit_batches`**: `int` caches `N` batches; `float` in `(0, 1.0)` caches that fraction of batches so you can verify memorization on a small subset.
+- **`detect_anomaly=True`**: Wraps forward/backward passes in `torch.autograd.detect_anomaly()`.
+
+---
+
+## Loss Functions (`loss`)
+
+`create_loss_function()` accepts an `nn.Module`, a custom callable, or any of these built-in string names:
+
+| Config Name | PyTorch / KitePy Module | Notes |
+|---|---|---|
+| `"cross_entropy"` / `"ce"` | `nn.CrossEntropyLoss` | Supports `class_weights` and `label_smoothing` |
+| `"focal"` | `FocalLoss(gamma=2.0)` | Built-in focal loss supporting `class_weights` |
+| `"bce"` / `"binary_cross_entropy"` | `nn.BCEWithLogitsLoss` | Maps `class_weights` to `pos_weight` |
+| `"mse"` / `"l2"` | `nn.MSELoss` | Regression default |
+| `"mae"` / `"l1"` | `nn.L1Loss` | L1 regression |
+| `"smooth_l1"` | `nn.SmoothL1Loss` | Huber-like smooth L1 |
+| `"huber"` | `nn.HuberLoss` | Robust regression |
+| `"kl_div"` / `"kld"` | `nn.KLDivLoss(reduction="batchmean")` | KL divergence |
+| `"nll"` | `nn.NLLLoss` | Negative log-likelihood (supports `class_weights`) |
+| `"margin"` | `nn.MultiMarginLoss` | Multi-class hinge margin loss |
+
+### Automatic Class Balancing
+
+Pass `class_weights="balanced"` on imbalanced datasets to automatically compute inverse-frequency weights from dataset targets (`Tensor` or folder `ImageFolder` targets, including `Subset` splits):
+
+```python
+CNN("convnext_tiny", pretrained=True).train(
+    "./imbalanced_folders",
+    epochs=10,
+    class_weights="balanced",
 )
 ```
 
-## Logging
+---
 
-### Log Frequency
+## Resuming Training
 
-```python
-model.train("cifar10", log_every_n_steps=50)
-```
+Pass `resume_from_checkpoint="checkpoints/model_epoch5_loss0.3412.pt"` to restore model weights, optimizer, scheduler, `GradScaler`, `ModelEMA`, `global_step`, `best_val_loss`, and `history`.
 
-### Validation Frequency
-
-```python
-model.train("cifar10",
-    val_check_interval=0.5,  # Validate every half epoch
-)
-
-# Or step-based
-model.train("cifar10",
-    val_check_interval=1000,  # Validate every 1000 steps
-)
-```
-
-## Reproducibility
-
-### Set Seed
-
-```python
-model.train("cifar10", seed=42)
-```
-
-### Deterministic Training
-
-```python
-model.train("cifar10",
-    seed=42,
-    deterministic=True,  # Slower but reproducible
-)
-```
-
-## Debugging
-
-### Fast Dev Run
-
-Test your training loop quickly:
-
-```python
-model.train("cifar10", fast_dev_run=True)  # 1 batch only
-```
-
-### Overfit Test
-
-Check if model can overfit on small data:
-
-```python
-model.train("cifar10", overfit_batches=10)  # Overfit on 10 batches
-```
-
-### Anomaly Detection
-
-Find NaN/Inf issues:
-
-```python
-model.train("cifar10", detect_anomaly=True)
-```
-
-## Training Output
-
-During training, you'll see:
-
-```
-========================================
-🚀 Training Configuration
-========================================
-  Epochs:     50
-  Batch Size: 128
-  Learning Rate: 0.001
-  Device:     cuda:0
-  Mixed Precision: True
-
-Epoch 1/50: 100%|████████████| 391/391 [00:28<00:00, 13.89it/s]
-  → Train Loss: 1.8234 | Train Acc: 33.21%
-  → Val Loss: 1.5432 | Val Acc: 45.67%
-  → LR: 0.001
-  → Checkpoint saved: checkpoints/model_epoch1_loss1.5432.pt
-
-Epoch 2/50: 100%|████████████| 391/391 [00:27<00:00, 14.12it/s]
-  → Train Loss: 1.4523 | Train Acc: 48.92%
-  → Val Loss: 1.2341 | Val Acc: 56.78%
-  ...
-
-✓ Training complete! Best metric: 0.5123
-```
-
-## Evaluate After Training
-
-```python
-metrics = model.evaluate("cifar10")
-print(f"Test Accuracy: {metrics['test_accuracy']:.2f}%")
-```
+<Note>
+Resume loading defaults to strict `weights_only=True`. If resuming model weights from a checkpoint whose optimizer parameter groups differ (such as a `ModelCheckpoint` callback file or changed optimizer config), KitePy logs a warning and resumes model weights cleanly with fresh optimizer state.
+</Note>

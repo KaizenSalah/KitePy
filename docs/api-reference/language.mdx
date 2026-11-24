@@ -1,0 +1,77 @@
+---
+title: 'Language (LLM & TextClassifier)'
+description: 'API reference for LLM, TextClassifier, TinyGPT, LoRA helpers, and text data utilities'
+icon: 'message-code'
+---
+
+## `LLM`
+
+```python
+from kitepy import LLM
+```
+
+### Constructor
+
+```python
+LLM(
+    model: Optional[Union[str, nn.Module]] = "tiny_gpt",
+    config: Optional[Union[Dict, LLMConfig, str]] = None,
+    task: str = "causal_lm",
+    **kwargs,
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `model` | `Optional[Union[str, nn.Module]]` | `"tiny_gpt"` | `"tiny_gpt"`, preset from `LLM_PRESETS`, HuggingFace repo/local path, or custom `nn.Module` |
+| `config` | `Optional[Union[Dict, LLMConfig, str]]` | `None` | `LLMConfig`, `ExperimentConfig`, dict, or YAML/JSON path |
+| `task` | `str` | `"causal_lm"` | `"causal_lm"` (`CausalLMAdapter`) or `"classification"` / `"sequence_classification"` (`SequenceClassificationAdapter`) |
+| `**kwargs` | `Any` | — | Passed to `LLMConfig`, `DataConfig`, and `TrainingConfig` (`lora`, `lora_r`, `lora_alpha`, `lora_dropout`, `context_length`, `trust_remote_code`, etc.) |
+
+### `LLM.generate()`
+
+```python
+llm.generate(
+    prompt: str,
+    max_new_tokens: int = 32,
+    temperature: float = 0.7,
+) -> str
+```
+
+- Automatically builds the model and tokenizer if not yet built.
+- Uses HuggingFace `model.generate(...)` when available (`temperature > 0` sets `do_sample=True`), or the built-in autoregressive loop on `TinyGPT` (`temperature <= 0` uses greedy `.argmax()`).
+
+---
+
+## `TextClassifier`
+
+```python
+from kitepy import TextClassifier
+
+TextClassifier(
+    model: Optional[Union[str, nn.Module]] = "tiny_gpt",
+    num_classes: int = 2,
+    **kwargs,
+)
+```
+
+Convenience subclass of `LLM` setting `task="classification"` and `num_labels=num_classes`.
+
+---
+
+## Architecture & LoRA Utilities (`kitepy.pillars.language`)
+
+- **`TinyGPT(cfg: LLMConfig)`**: Built-in causal transformer / classifier with optional tied word/head weights (`cfg.tie_word_embeddings`).
+- **`LoRALinear(base: nn.Linear, r: int = 8, alpha: int = 16, dropout: float = 0.05)`**: Low-rank linear wrapper freezing base weight/bias.
+- **`apply_builtin_lora(model: nn.Module, r: int = 8, alpha: int = 16, dropout: float = 0.05) -> nn.Module`**: Freezes parameters and wraps matching projection linear layers (skipping `nn.MultiheadAttention`).
+
+---
+
+## Data Utilities (`kitepy.pillars.language.data`)
+
+- **`SimpleCharTokenizer(vocab_size: int = 260)`**: UTF-8 byte-level fallback tokenizer (`pad=0, bos=1, eos=2, bytes=3..258`).
+- **`format_chat_record(record, tokenizer=None) -> str`**: Formats ChatML `messages`, Alpaca `instruction/input/output`, `prompt/completion`, `question/answer`, and `text`/`content`.
+- **`TextListDataset(items, labels, tokenizer, max_length=512)`**: PyTorch `Dataset` for in-memory sequences and dicts.
+- **`StreamingJsonlDataset(file_path, tokenizer, max_length=512)`**: `IterableDataset` triggered when `streaming=True` on `.jsonl`/`.txt` files.
+- **`make_language_collate_fn(pad_token_id: int, is_causal_lm: bool = True)`**: Dynamic per-batch padding and `-100` label masking.
+- **`load_language_data(dataset_name, data_config, train_config, tokenizer=None, vocab_size=260)`**: Returns `(train_loader, val_loader, None, metadata)`.

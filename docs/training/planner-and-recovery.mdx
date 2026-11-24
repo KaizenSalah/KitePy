@@ -1,0 +1,75 @@
+---
+title: 'Execution Planner & Runtime Fault Recovery'
+description: 'Memory-constrained micro-batch solving, automatic OOM splitting, NaN/Inf guards, and structured JSONL logs'
+icon: 'shield-halved'
+---
+
+## Overview
+
+`ExecutionPlanner` and `RuntimeGuard` make large-batch and tight-VRAM training automatic without altering the effective batch size math.
+
+```python
+from kitepy import LLM
+
+llm = LLM("Qwen/Qwen2.5-0.5B", pretrained=True, lora=True)
+llm.train(
+    "chat.jsonl",
+    epochs=3,
+    batch_size=16,
+    auto_plan=True,
+    memory_budget_mb=4096.0,
+    auto_recover=True,
+    structured_log_file="./logs/run.jsonl",
+)
+
+print(llm.execution_report)
+```
+
+---
+
+## Pre-Flight `ExecutionPlanner`
+
+Enabled when `auto_plan=True` or `memory_budget_mb` is specified:
+
+1. **Resolves Memory Budget**: Uses `memory_budget_mb` if provided, otherwise queries free CUDA memory (`torch.cuda.mem_get_info()`) scaled by `safety_factor=0.85` (nominal `8192.0` MB on CPU/MPS).
+2. **Estimates Static Footprint**: `estimate_static_memory_mb()` computes parameter + gradient + AdamW state memory (`12 B/param` with AMP, `16 B/param` in fp32, `4 B/param` frozen).
+3. **Probes Per-Sample Activation Memory**: Runs a single-sample dry pass under `_SingletonBatchNormGuard` (which temporarily toggles `BatchNorm*d` layers to `eval()` during the `bs=1` probe) on CUDA, restoring initial weights afterwards — or falls back analytically on CPU.
+4. **Solves `ExecutionPlan`**: Picks `amp_dtype` (`"bf16"` / `"fp16"` / `"fp32"`), `micro_batch_size`, `gradient_accumulation_steps` (`ceil(effective_target / (micro_bs * world_size))`), and enables `gradient_checkpointing` when available on the model and `est_peak > budget_mb * 0.9`.
+
+---
+
+## Runtime Fault Recovery (`RuntimeGuard`)
+
+Enabled by default (`auto_recover=True`):
+
+### 1. OOM Micro-Batch Backoff
+
+If a forward/backward pass raises CUDA `OutOfMemoryError` (or any `"out of memory"` error):
+1. Zeros gradients and clears CUDA cache.
+2. Recursively splits the batch via `split_batch_into_micro_batches()` (`2`, `4`, or `8` chunks across tensors, nested `Mapping` dicts, collated `(inputs, targets)` tuples/lists, and detection `([imgs], [target_dicts])` batches).
+3. Guards `BatchNorm` layers with `_SingletonBatchNormGuard` if a split chunk has size `1`, accumulates gradients across chunks, and increments `guard.oom_recoveries`.
+
+### 2. NaN / Inf Loss & Gradient Guard
+
+`RuntimeGuard.check_finite_loss()` and `check_finite_gradients()` verify loss and gradient tensors before stepping the optimizer:
+- Any non-finite loss or gradient skips the optimizer step (`guard.nan_skips += 1`) without corrupting model weights or EMA state.
+- Raises `RuntimeError` if `max_consecutive_nan_steps` (default `5`) consecutive non-finite steps occur.
+
+---
+
+## Structured Logging & `execution_report`
+
+After `.train()`, `model.execution_report` contains:
+
+```python
+{
+    "lineage": {"kitepy_version": "0.2.1", "torch_version": ..., "python_version": ..., "git_sha": ..., "timestamp_utc": ...},
+    "execution_plan": {...},  # if auto_plan / memory_budget_mb was enabled
+    "recovery": {"oom_recoveries": 0, "nan_skips": 0},
+    "epochs_completed": 3,
+    "global_step": 120,
+    "best_val_loss": 0.4215,
+}
+```
+
+Set `log_level` (`"DEBUG"`, `"INFO"`, `"WARNING"`, `"ERROR"`, `"SILENT"`) or call `set_log_level("WARNING")`. Pass `structured_log_file="events.jsonl"` to emit machine-readable JSONL records (`execution_plan`, `train_start`, `epoch_N_end`, `train_end`) on global rank `0` only.

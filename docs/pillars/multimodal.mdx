@@ -1,0 +1,74 @@
+---
+title: 'Multimodal (VLM)'
+description: 'Contrastive vision-language training and zero-shot classification with DualEncoderCLIP and HuggingFace CLIP'
+icon: 'images'
+---
+
+## Overview
+
+`VLM` supports symmetric CLIP-style contrastive learning across image-text pairs using either KitePy's built-in `DualEncoderCLIP` or pretrained HuggingFace `CLIPModel` + `CLIPProcessor`.
+
+```python
+from kitepy import VLM
+
+vlm = VLM("clip_tiny").train("synthetic", epochs=3)
+```
+
+---
+
+## Simple vs. HuggingFace CLIP Usage
+
+<CodeGroup>
+```python Offline Contrastive + Zero-Shot
+from kitepy import VLM
+
+vlm = VLM("clip_tiny", projection_dim=128, temperature=0.07)
+vlm.train("pairs.jsonl", epochs=10, batch_size=16, img_size=64)
+
+probs = vlm.predict(
+    "sample.jpg",
+    texts=["a golden retriever on grass", "a red sports car", "a wooden chair"],
+)
+print(probs)  # tensor([[0.82, 0.11, 0.07]])
+```
+
+```python Pretrained HuggingFace CLIP
+from kitepy import VLM
+
+vlm = VLM("openai/clip-vit-base-patch32", pretrained=True)
+probs = vlm.predict("photo.png", texts=["cat", "dog", "bird"])
+```
+</CodeGroup>
+
+---
+
+## Manifest & Data Formats
+
+`load_multimodal_data()` accepts:
+- **`"synthetic"`**: 48 train / 16 val random `(image, token_ids)` pairs.
+- **`.jsonl` / `.json` / `.csv` manifests**: Records mapping image paths (resolved relative to the manifest file directory if relative) and captions (`"text"` or `"caption"`):
+
+```jsonl pairs.jsonl
+{"image": "images/dog_01.jpg", "text": "a brown dog running outdoors"}
+{"image": "images/car_02.jpg", "text": "a silver sedan parked on the street"}
+```
+
+When >= 5 records exist, KitePy splits 80/20 train/validation reproducibly with `train_config.seed`.
+
+---
+
+## `VLM.predict()` Parameters & Notes
+
+```python
+probs_or_logits = vlm.predict(image, texts=["label a", "label b"], return_probs=True)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `image` | `Tensor`, `PIL.Image.Image`, `str`, `Path` | required | File paths and PIL images are automatically opened/resized; HuggingFace models use `CLIPProcessor` |
+| `texts` | `List[str]` | `None` (raises `ValueError` if omitted) | Candidate text descriptions to score against `image` |
+| `return_probs` | `bool` | `True` | Returns `torch.softmax(logits_per_image, dim=-1)` when `True`, raw `logits_per_image` when `False` |
+
+<Note>
+**`to_fastapi()` & Presets Note**: Because `VLM.predict()` requires both `image` and `texts=[...]`, `BaseModel.to_fastapi()` (which calls `self.predict(inputs, top_k=...)`) is not intended for `VLM` in `0.2.1`. In addition, the built-in offline `DualEncoderCLIP` uses a fixed lightweight conv vision stem + embedding text encoder regardless of `VLMConfig.vision_model`/`text_model`; use a HuggingFace repo ID with `pretrained=True` to load full pretrained CLIP weights.
+</Note>

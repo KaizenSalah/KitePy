@@ -1,0 +1,106 @@
+---
+title: 'Task Adapters & Pillar Registry'
+description: 'How KitePy decouples training loops from modalities via TaskAdapter and ADAPTER_REGISTRY'
+icon: 'diagram-project'
+---
+
+## Overview
+
+`Engine` does not hardcode classification logic. Instead, every forward pass, loss calculation, and batch metric goes through a `TaskAdapter` resolved by `get_adapter(task_or_adapter, modality="vision", train_step=None)`.
+
+## Built-In Task Adapters
+
+All 10 adapters live in `kitepy/core/adapters.py` and are registered in `ADAPTER_REGISTRY`:
+
+| Registry Key | Adapter Class | Primary Metric | Expected Model / Batch Format |
+|---|---|---|---|
+| `"classification"` | `ClassificationAdapter` | `"acc"` | Multi-class logits `(B, C)`; supports hard labels or 2D MixUp/CutMix soft targets |
+| `"binary"` | `BinaryClassificationAdapter` | `"acc"` | Single-logit `(B,)` or `(B, 1)` + float targets (`BCEWithLogitsLoss`); computes sigmoid `@ 0.5` accuracy |
+| `"multilabel"` | `MultiLabelClassificationAdapter` | `"acc"` | `(B, C)` logits + binary target matrix `(B, C)` (or auto one-hot if 1D int labels) |
+| `"regression"` | `RegressionAdapter` | `"mae"` | Continuous predictions vs float targets; tracks `"mae"` and `"rmse"` |
+| `"causal_lm"` | `CausalLMAdapter` | `"perplexity"` | Dict/`Mapping` or `(inputs, labels)` shifted next-token cross entropy (`ignore_index=-100`); tracks `"perplexity"` |
+| `"sequence_classification"` | `SequenceClassificationAdapter` | `"acc"` | Tokenizer dict/`Mapping` batches (`input_ids`, `attention_mask`, `labels`) with HF or custom modules |
+| `"contrastive"` | `ContrastiveAdapter` | `"acc"` | Symmetric CLIP-style `0.5 * (CE_image + CE_text)` over `(logits_per_image, logits_per_text)` or dict |
+| `"generative"` | `GenerativeAdapter` | `"recon_loss"` | Supports `model.compute_loss(x)` (DDPM), `(recon, mu, logvar)` tuple (VAE MSE + KL), or plain reconstruction MSE |
+| `"segmentation"` | `SegmentationAdapter` | `"miou"` | Pixel logits `(B, C, H, W)` (supports torchvision `{"out": ...}` dicts and single-channel binary masks); tracks `"pixel_acc"` & `"miou"` |
+| `"detection"` | `DetectionAdapter` | `"detections"` | Torchvision detector contract: `model(images, targets)` dict losses in train mode, list of box dicts in eval mode; tracks `"avg_detections"` |
+
+### Default Modality Mapping
+
+When `task` is omitted in `get_adapter(None, modality=...)`, defaults are:
+
+- `"vision"`, `"audio"`, `"tabular"` → `ClassificationAdapter`
+- `"language"` → `CausalLMAdapter`
+- `"multimodal"` → `ContrastiveAdapter`
+- `"generative"` → `GenerativeAdapter`
+
+### Adversarial Safety in `CausalLMAdapter`
+
+`CausalLMAdapter.forward_and_loss()` safely handles:
+- Any `collections.abc.Mapping` (e.g., `dict`, `UserDict`, HuggingFace `BatchEncoding`)
+- Custom modules whose `forward()` only accepts positional tensor `input_ids` instead of `**kwargs`
+- Context-clamped outputs where `logits.size(1) != labels.size(1)`
+- Degenerate sequences (`seq_len <= 1`) or batches where every shifted token is masked (`-100`) — returns a finite computation-graph-attached zero loss (`logits.sum() * 0.0`) instead of `0 / 0 = NaN`
+
+---
+
+## Customizing Training Steps
+
+### Option 1 — Quick Hook with `train_step`
+
+Pass any callable `(engine, batch) -> (loss, outputs, targets)` (or returning just a `loss` Tensor) to `.train(...)` or `TrainingConfig`:
+
+```python
+import torch.nn.functional as F
+from kitepy import CNN
+
+def my_step(engine, batch):
+    x, y = batch
+    logits = engine.model(x)
+    loss = F.cross_entropy(logits, y)
+    return loss, logits, y
+
+CNN("resnet18").train("synthetic", train_step=my_step, epochs=2, fast_dev_run=True)
+```
+
+Internally, `train_step` is wrapped in `CustomStepAdapter`.
+
+### Option 2 — Subclass `TaskAdapter`
+
+For custom metric aggregation or domain-specific losses, subclass `TaskAdapter` and pass it to `Engine(..., adapter=MyAdapter())` or `BaseModel(..., adapter=MyAdapter())`:
+
+```python
+from kitepy import TaskAdapter, Engine, TrainingConfig
+
+class MaskedMSEAdapter(TaskAdapter):
+    task_name = "masked_mse"
+    primary_metric = "mse"
+
+    def forward_and_loss(self, model, batch, criterion, engine=None):
+        x, y, mask = batch
+        preds = model(x)
+        loss = ((preds - y) ** 2 * mask).sum() / mask.sum().clamp(min=1)
+        return loss, (preds, mask), y
+
+    def compute_batch_metrics(self, outputs, targets, loss_value, batch):
+        return {"loss_sum": float(loss_value), "total": 1.0}
+
+    def finalize_epoch_metrics(self, totals, num_batches):
+        return {"mse": totals["loss_sum"] / max(1.0, totals["total"])}
+```
+
+---
+
+## Extending With New Modalities (`register_pillar`)
+
+Register a new modality's data loader in `_PILLAR_REGISTRY` so any `BaseModel` subclass automatically resolves it:
+
+```python
+from kitepy import BaseModel, register_pillar
+
+def load_graph_data(data_arg, data_config, train_config):
+    # Return (train_loader, val_loader, test_loader, metadata_dict)
+    ...
+
+register_pillar(name="graph", data_loader=load_graph_data, default_task="classification")
+```

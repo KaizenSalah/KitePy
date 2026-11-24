@@ -1,0 +1,86 @@
+---
+title: 'Multi-Task Vision'
+description: 'Binary, multi-label, image regression, semantic segmentation, and object detection with Vision(task=...)'
+icon: 'eye'
+---
+
+## Overview
+
+Use `Vision(task=..., model=...)` whenever you want explicit task routing beyond standard multi-class image classification. All 6 tasks preserve their `.task`, adapter, and architecture across `.save()` and `.load()`.
+
+```python
+from kitepy import Vision
+```
+
+---
+
+## Supported Tasks (`Vision.TASK_DEFAULTS`)
+
+| `task` | Adapter Used | Default Loss | Default `model` | Default `num_classes` |
+|---|---|---|---|---|
+| `"classification"` | `ClassificationAdapter` | `"cross_entropy"` | `"resnet18"` | `CNNConfig` default (`1000`, auto-aligned to data) |
+| `"binary"` | `BinaryClassificationAdapter` | `"bce"` | `"resnet18"` | `1` (unless specified) |
+| `"multilabel"` | `MultiLabelClassificationAdapter` | `"bce"` | `"resnet18"` | auto-aligned / user-supplied |
+| `"regression"` | `RegressionAdapter` | `"mse"` | `"resnet18"` | `1` |
+| `"segmentation"` | `SegmentationAdapter` | `"cross_entropy"` | `"unet"` (`SimpleUNet`) | `2` (unless specified) |
+| `"detection"` | `DetectionAdapter` | `"cross_entropy"` | `"tiny_detector"` (`TinyDetector`) | `1000` / user-supplied |
+
+---
+
+## Examples by Task
+
+<CodeGroup>
+```python Binary & Multilabel
+from kitepy import Vision
+
+# Binary classification (single logit + BCEWithLogitsLoss)
+bin_model = Vision(task="binary", model="resnet18", num_classes=1)
+bin_model.train("synthetic", img_size=64, epochs=2, batch_size=8)
+probs = bin_model.predict("sample.jpg", top_k=2)  # Returns 2-class sigmoid probs [class 0, class 1]
+
+# Multi-label classification (multi-hot BCEWithLogitsLoss)
+ml_model = Vision(task="multilabel", model="resnet18", num_classes=5)
+ml_model.train("synthetic", img_size=64, epochs=2, batch_size=8)
+```
+
+```python Image Regression
+from kitepy import Vision
+
+reg = Vision(task="regression", model="resnet18")
+reg.train("synthetic", img_size=64, epochs=2, batch_size=8)
+
+# predict() returns raw continuous values; top_k returns continuous scalar/list (no softmax)
+val = reg.predict("sample.jpg")
+```
+
+```python Semantic Segmentation
+from kitepy import Vision
+
+# Built-in SimpleUNet (model="unet")
+seg = Vision(task="segmentation", model="unet", num_classes=3)
+seg.train("synthetic", img_size=64, epochs=2, batch_size=4)
+seg.save("seg_unet.safetensors", safe=True)
+
+reloaded = Vision.load("seg_unet.safetensors")
+mask_logits = reloaded.predict(sample_tensor)  # (1, 3, 64, 64)
+
+# Or use torchvision segmentation models (e.g., fcn_resnet50, deeplabv3_resnet50)
+tv_seg = Vision(task="segmentation", model="fcn_resnet50", num_classes=21, pretrained=False)
+```
+
+```python Object Detection
+from kitepy import Vision
+
+# Built-in TinyDetector baseline
+det = Vision(task="detection", model="tiny_detector", num_classes=4)
+det.train("synthetic", img_size=64, epochs=2, batch_size=4)
+detections = det.predict(sample_tensor)  # [{"boxes": ..., "labels": ..., "scores": ...}]
+
+# Or any torchvision.models.detection model (fasterrcnn_resnet50_fpn, ssdlite320_mobilenet_v3_large, ...)
+frcnn = Vision(task="detection", model="fasterrcnn_resnet50_fpn", num_classes=4, pretrained=False)
+```
+</CodeGroup>
+
+<Note>
+`TinyDetector` is a lightweight baseline detector built for single-box-per-image smoke runs and fast verification (`boxes[0]`, `labels[0]`). For real multi-object detection datasets, pass any `torchvision.models.detection` model name such as `"fasterrcnn_resnet50_fpn"` or `"ssdlite320_mobilenet_v3_large"`, or a custom `nn.Module` following the torchvision `(images, targets) -> losses` contract.
+</Note>

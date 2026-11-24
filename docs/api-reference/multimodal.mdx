@@ -1,0 +1,63 @@
+---
+title: 'Multimodal (VLM)'
+description: 'API reference for VLM, DualEncoderCLIP, and multimodal manifest loaders'
+icon: 'images'
+---
+
+## `VLM`
+
+```python
+from kitepy import VLM
+```
+
+### Constructor
+
+```python
+VLM(
+    model: Optional[Union[str, nn.Module]] = "clip_tiny",
+    config: Optional[Union[Dict, VLMConfig, str]] = None,
+    **kwargs,
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `model` | `Optional[Union[str, nn.Module]]` | `"clip_tiny"` | Preset from `VLM_PRESETS`, HuggingFace CLIP repo ID (when `pretrained=True` and `"/" in model`), or custom `nn.Module` |
+| `config` | `Optional[Union[Dict, VLMConfig, str]]` | `None` | `VLMConfig`, `ExperimentConfig`, dict, or YAML/JSON path |
+| `**kwargs` | `Any` | — | Routed via `split_kwargs()` |
+
+### `VLM.predict()`
+
+```python
+vlm.predict(
+    image: Any,
+    texts: Optional[List[str]] = None,
+    **kwargs,
+) -> torch.Tensor
+```
+
+- `image`: `torch.Tensor` `(B, C, H, W)` / `(C, H, W)`, `PIL.Image.Image`, `str`, or `Path`.
+- `texts`: Required list of candidate text captions (`Raises ValueError` if `None`).
+- `kwargs.get("return_probs", True)`: Returns `torch.softmax(logits_per_image, dim=-1)` by default, or raw `logits_per_image` if `return_probs=False`.
+
+---
+
+## `DualEncoderCLIP`
+
+```python
+DualEncoderCLIP(
+    projection_dim: int = 128,
+    vocab_size: int = 1000,
+    temperature: float = 0.07,
+)
+```
+
+Lightweight dual-encoder CLIP architecture exposing `encode_image(images)`, `encode_text(input_ids)`, and `forward(images, input_ids) -> (logits_per_image, logits_per_text)`.
+
+---
+
+## Data Loaders (`kitepy.pillars.multimodal.data`)
+
+- **`ImageTextManifestDataset(records, base_dir, tokenizer, img_size=64, max_length=64)`**
+- **`SyntheticMultimodalDataset(num_samples=64, img_size=64, seq_len=16, vocab_size=260)`**
+- **`load_multimodal_data(dataset_name, data_config, train_config)`**: Loads `"synthetic"` or `.jsonl` / `.json` / `.csv` image-text manifests.

@@ -1,0 +1,86 @@
+---
+title: 'FastAPI Serving & CLI'
+description: 'Serve trained models via FastAPI and drive training, export, and inference from the kitepy CLI'
+icon: 'terminal'
+---
+
+## Live FastAPI Inference (`model.to_fastapi()`)
+
+Requires `pip install fastapi uvicorn`:
+
+```python
+from kitepy import CNN
+
+model = CNN.load("my_model.safetensors")
+app = model.to_fastapi()
+```
+
+### Generated Endpoints
+
+- **`GET /health`** → `{"status": "ok", "model": self.model_name, "modality": self.modality}`
+- **`POST /predict`** → Expects JSON body `{"inputs": ..., "top_k": 5}` (`top_k` optional, defaults to `5`), returns `{"predictions": ...}` (returns HTTP `400` on invalid input/runtime error).
+
+Numeric JSON arrays (like Vision image lists or Tabular feature matrices) are converted to `torch.Tensor` with single-item unwrapping preserved for classification/binary/detection/regression, while string inputs (`TextClassifier` / `LLM`) pass straight through `_preprocess_input()` cleanly:
+
+<CodeGroup>
+```python Vision Classification
+from fastapi.testclient import TestClient
+import numpy as np
+
+resp = TestClient(cnn.to_fastapi()).post(
+    "/predict",
+    json={"inputs": np.random.randn(1, 3, 32, 32).tolist(), "top_k": 2},
+)
+# {"predictions": [{"class_id": 1, "label": "cat", "confidence": 0.62}, ...]}
+```
+
+```python TextClassifier
+resp = TestClient(text_clf.to_fastapi()).post(
+    "/predict",
+    json={"inputs": ["KitePy makes PyTorch easy"], "top_k": 2},
+)
+# {"predictions": [[{"class_id": 1, "label": "pos", "confidence": 0.85}, ...]]}
+```
+
+```python Tabular Regression & Detection
+reg_resp = TestClient(reg_model.to_fastapi()).post(
+    "/predict",
+    json={"inputs": np.random.randn(2, 16).tolist(), "top_k": 3},
+)
+# {"predictions": [-0.075, -0.114]}
+
+det_resp = TestClient(det_model.to_fastapi()).post(
+    "/predict",
+    json={"inputs": np.random.rand(1, 3, 64, 64).tolist(), "top_k": 3},
+)
+# {"predictions": {"boxes": [[...]], "labels": [...], "scores": [...]}}
+```
+</CodeGroup>
+
+---
+
+## `kitepy` Command-Line Interface
+
+KitePy installs the `kitepy` console script (`kitepy/cli.py`). For `predict`, diagnostic loading messages redirect to `stderr` so `stdout` outputs pure JSON suitable for `json.loads()` / `jq`:
+
+```bash
+# 1. Print environment, PyTorch, optional libraries, and GPU/CPU diagnostics
+kitepy doctor
+
+# 2. List registered model or dataset presets as JSON
+kitepy models all
+kitepy models llm
+kitepy datasets vision
+
+# 3. Train from a YAML/JSON experiment config
+kitepy train config.yaml --modality vision --model resnet18 --data cifar10 --epochs 5 --save ckpts/resnet18.safetensors
+
+# 4. Export a saved checkpoint
+kitepy export ckpts/resnet18.safetensors out/resnet18.onnx --modality vision --format auto
+
+# 5. Run inference emitting strict JSON on stdout
+kitepy predict ckpts/resnet18.safetensors sample.png --modality vision --top-k 3
+
+# 6. Start a FastAPI Uvicorn server
+kitepy serve ckpts/resnet18.safetensors --modality vision --host 127.0.0.1 --port 8000
+```

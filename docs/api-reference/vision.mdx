@@ -1,122 +1,99 @@
 ---
 title: 'Vision'
-description: 'API reference for the Vision class'
+description: 'API reference for multi-task Vision, SimpleUNet, and TinyDetector (kitepy.pillars.vision)'
 icon: 'eye'
 ---
 
 ## Overview
 
-The `Vision` class provides a general vision model API with explicit task specification. This is for advanced users who want more control over the model type.
+`Vision` (`modality = "vision"`, `default_config_class = CNNConfig`) extends `_VisionMixin` and `BaseModel` with explicit task selection across 6 vision tasks.
 
 ```python
 from kitepy import Vision
 ```
 
-<Note>
-For most use cases, use `CNN` or `Transformer` directly instead of `Vision`.
-</Note>
+---
 
 ## Constructor
 
 ```python
 Vision(
     task: str = "classification",
-    model: Optional[Union[str, nn.Module]] = "resnet18",
+    model: Optional[Union[str, nn.Module]] = None,
     config: Optional[Union[Dict, CNNConfig, str]] = None,
-    **kwargs
+    **kwargs,
 )
 ```
 
-### Parameters
-
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `task` | `str` | `"classification"` | Task type: "classification", "detection", "segmentation" |
-| `model` | `str` or `nn.Module` | `"resnet18"` | Model name or custom PyTorch model |
-| `config` | Config | `None` | Configuration object, dict, or path |
-| `**kwargs` | | | Override any config values |
-
-### Examples
-
-```python
-# Image classification
-model = Vision(task="classification", model="resnet50")
-model.train("cifar10")
-
-# Object detection (coming soon)
-model = Vision(task="detection", model="yolo")
-
-# Semantic segmentation (coming soon)
-model = Vision(task="segmentation", model="unet")
-```
+|---|---|---|---|
+| `task` | `str` | `"classification"` | One of `"classification"`, `"binary"`, `"multilabel"`, `"regression"`, `"segmentation"`, `"detection"` (`NotImplementedError` otherwise) |
+| `model` | `Optional[Union[str, nn.Module]]` | `None` | Auto-resolves to `"unet"` (`segmentation`), `"tiny_detector"` (`detection`), or `"resnet18"` (all other tasks); also accepts `timm` models, `torchvision.models.segmentation.*`, `torchvision.models.detection.*`, or custom `nn.Module` |
+| `config` | `Optional[Union[Dict, CNNConfig, str]]` | `None` | Config object, dict, or YAML/JSON path |
+| `**kwargs` | `Any` | — | Additional config overrides |
 
 ---
 
-## Supported Tasks
+## `Vision.TASK_DEFAULTS`
 
-### Classification (Available)
-
-```python
-model = Vision(task="classification", model="resnet50")
-model.train("cifar10")
-```
-
-Equivalent to using `CNN` directly.
-
-### Detection (Coming Soon)
-
-```python
-# Coming in Phase 2
-model = Vision(task="detection", model="yolov8")
-model.train("coco")
-```
-
-### Segmentation (Coming Soon)
-
-```python
-# Coming in Phase 2
-model = Vision(task="segmentation", model="unet")
-model.train("cityscapes")
-```
+| Task | Adapter | Default Loss | Fallback `num_classes` (if unset) |
+|---|---|---|---|
+| `"classification"` | `"classification"` | `"cross_entropy"` | `1000` (auto-aligned to dataset) |
+| `"binary"` | `"binary"` | `"bce"` | `1` |
+| `"multilabel"` | `"multilabel"` | `"bce"` | auto-aligned / user-supplied |
+| `"regression"` | `"regression"` | `"mse"` | `1` |
+| `"segmentation"` | `"segmentation"` | `"cross_entropy"` | `2` |
+| `"detection"` | `"detection"` | `"cross_entropy"` | `1000` / user-supplied |
 
 ---
 
-## Methods
+## Built-In Helper Architectures (`kitepy.pillars.vision`)
 
-The `Vision` class inherits all methods from `BaseModel`:
+### `SimpleUNet`
 
-- `train()` - Train the model
-- `evaluate()` - Evaluate on a dataset
-- `predict()` - Run inference
-- `save()` / `load()` - Save and load models
-- `freeze_backbone()` / `unfreeze()` - Transfer learning
-- `describe()` - Print model description
-- `profile()` - Profile performance
-- `export()` - Export for deployment
+```python
+SimpleUNet(in_channels: int = 3, num_classes: int = 2, base_ch: int = 32)
+```
+Lightweight U-Net with bilinear size alignment before decoding. Expects `(B, C, H, W)` inputs and returns `(B, num_classes, H, W)` pixel logits.
 
-See the [CNN API Reference](/api-reference/cnn) for detailed documentation.
+### `TinyDetector`
 
----
-
-## Class Attributes
-
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `modality` | `str` | `"vision"` |
-| `task` | `str` | The specified task |
-| `model` | `nn.Module` | The underlying PyTorch model |
-| `config` | `CNNConfig` | The configuration object |
+```python
+TinyDetector(in_channels: int = 3, num_classes: int = 10)
+```
+Lightweight baseline detector following the torchvision detection interface:
+- `train()`: `forward(images, targets)` returns `{"loss_box": smooth_l1, "loss_cls": cross_entropy}` (uses the first box/label per target image).
+- `eval()`: `forward(images)` returns `[{"boxes": Tensor[1, 4], "labels": Tensor[1], "scores": Tensor[1]}, ...]`.
 
 ---
 
-## When to Use Vision
+## Vision Data & Transform Helpers (`kitepy.pillars.vision`)
 
-Use `Vision` when:
-- You want to explicitly specify the task
-- You're preparing for future detection/segmentation support
-- You want a more general API
+```python
+from kitepy import (
+    load_vision_data,
+    load_data,  # alias for load_vision_data
+    get_train_transforms,
+    get_val_transforms,
+)
+from kitepy.pillars.vision.data import load_vision_data_with_meta
+```
 
-Use `CNN` or `Transformer` when:
-- You know you want a specific architecture type
-- Simplicity is a priority
-- You don't need task switching
+- **`load_vision_data_with_meta(dataset_name, data_config, train_config, download=True)`** → `(train_loader, val_loader, test_loader, metadata)`
+- **`load_vision_data(...)` / `load_data(...)`** → backward-compatible 3-tuple `(train_loader, val_loader, test_loader)`
+- **`get_train_transforms(img_size: int, augmentation: str = "auto", to_rgb: bool = False, grayscale: bool = False)`**
+- **`get_val_transforms(img_size: int, to_rgb: bool = False, grayscale: bool = False)`**
+
+---
+
+## Examples
+
+```python
+from kitepy import Vision
+
+seg = Vision(task="segmentation", model="unet", num_classes=3)
+seg.train("synthetic", img_size=64, epochs=2, batch_size=4)
+seg.save("seg.safetensors", safe=True)
+
+reloaded = Vision.load("seg.safetensors")  # Preserves task="segmentation" and num_classes=3
+```

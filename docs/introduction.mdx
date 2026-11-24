@@ -1,113 +1,98 @@
 ---
 title: 'Introduction'
-description: 'Welcome to kitepy - Dead Simple Deep Learning'
+description: 'Build and train models across Vision, Language, Multimodal, Audio, Tabular, and Generative AI with one consistent API'
 icon: 'rocket'
 ---
 
+## What is KitePy?
 
-
-## What is kitepy?
-
-**kitepy** is a Python deep learning framework designed to make building and training neural networks as simple as possible. With kitepy, you can train state-of-the-art models with just **one line of code**.
+**KitePy** (`0.2.1`) is a modular PyTorch framework built on a single layered design: one-line training out of the box, with full engineering control over configs, task adapters, custom training steps, execution planning, and safe deployment underneath.
 
 ```python
 from kitepy import CNN
+
 CNN("resnet18").train("cifar10")
 ```
 
-That's it. No boilerplate. No configuration hell. Just magic. ✨
+## Six Domain Pillars, One Unified Contract
 
-## Why kitepy?
+Every model class in KitePy inherits from `BaseModel` and runs on the same `Engine` + `TaskAdapter` runtime:
+
+| Pillar | Public APIs | Supported Backends & Tasks |
+|--------|-------------|----------------------------|
+| **Vision** | `CNN`, `Transformer`, `Vision` | 800+ `timm` models, `SimpleUNet`, `TinyDetector`, `torchvision` segmentation/detection (`classification`, `binary`, `multilabel`, `regression`, `segmentation`, `detection`) |
+| **Language** | `LLM`, `TextClassifier` | Built-in `TinyGPT` + HuggingFace `AutoModelForCausalLM` / `AutoModelForSequenceClassification` with PEFT or built-in LoRA (`causal_lm`, `sequence_classification`) |
+| **Multimodal** | `VLM` | Built-in `DualEncoderCLIP` + HuggingFace `CLIPModel` / `CLIPProcessor` for contrastive training and zero-shot image-text scoring |
+| **Audio** | `Audio` | Built-in `AudioCNN` & `AudioTransformer` (automatic log-STFT spectrograms from waveforms) + HuggingFace `AutoModelForAudioClassification` |
+| **Tabular** | `Tabular` | `TabularResNet` & `TabularMLP` for CSVs, NumPy arrays, Tensor tuples, and classification or regression |
+| **Generative** | `Generative` | `ConvVAE`, `SimpleDDPM`, and optional `diffusers` `UNet2DModel` with `.sample(n)` |
+
+## Core Capabilities
 
 <CardGroup cols={2}>
-  <Card title="One-Line Training" icon="wand-magic-sparkles">
-    Train ResNet, EfficientNet, ViT, and 800+ more models with a single line of code.
+  <Card title="Auto-Inferred Data & Classes" icon="wand-magic-sparkles">
+    Automatically detects `num_classes`, `class_names`, `in_channels`, and `input_dim` from ImageFolders, CSVs, audio folders, and manifests — without leaking train augmentations into validation splits.
   </Card>
-  <Card title="Zero Configuration" icon="gear">
-    Smart defaults that just work. Start training immediately without configuration files.
+  <Card title="Layered Configuration" icon="sliders">
+    Override any option inline with keyword arguments, typed `Config` dataclasses (`TrainingConfig`, `CNNConfig`, `LLMConfig`, ...), flat/nested YAML/JSON files, or `ExperimentConfig` with strict typo hints.
   </Card>
-  <Card title="Full Customization" icon="sliders">
-    Override any parameter when you need control. From learning rates to augmentation strategies.
+  <Card title="ExecutionPlanner & RuntimeGuard" icon="shield-halved">
+    Pre-flight memory-budget planning solves for `(micro_batch_size, gradient_accumulation_steps, amp_dtype, gradient_checkpointing)`, while runtime OOM backoff splits failing batches and NaN/Inf guards skip poisoned updates.
   </Card>
-  <Card title="Production Ready" icon="industry">
-    Built on PyTorch and timm (HuggingFace coming). Export to ONNX and TorchScript for deployment.
+  <Card title="Safe Serialization & Serving" icon="rocket">
+    Save atomic pickle-free `.safetensors` + `.meta.json` bundles with lineage metadata, enforce strict `weights_only=True` `.pt` loading, export to TorchScript/ONNX, serve via `.to_fastapi()`, or run the `kitepy` CLI.
   </Card>
 </CardGroup>
 
-## Core Philosophy
-
-kitepy follows a simple design philosophy:
-
-<Steps>
-  <Step title="Simple by Default">
-    The most common use case should require the least code. Training a ResNet on CIFAR-10 is one line.
-  </Step>
-  <Step title="Powerful When Needed">
-    When you need control, every parameter is accessible. Configuration objects, YAML files, or keyword arguments - your choice.
-  </Step>
-  <Step title="Wrap, Don't Reimplement">
-    We wrap battle-tested libraries (PyTorch, timm) instead of reimplementing from scratch. HuggingFace integration is next!
-  </Step>
-</Steps>
-
-## Quick Example
-
-Here's how easy it is to train different models:
+## Quick Glance Across Modalities
 
 <CodeGroup>
-```python ResNet
-from kitepy import CNN
+```python Vision (CNN & Multi-Task)
+from kitepy import CNN, Vision
 
-# Train ResNet-18 on CIFAR-10
-model = CNN("resnet18")
-model.train("cifar10", epochs=10)
+CNN("resnet18").train("./my_images", epochs=10)
+preds = Vision(task="segmentation", model="unet", num_classes=3).train("synthetic", epochs=2)
 ```
 
-```python EfficientNet
-from kitepy import CNN
+```python Language (LoRA Fine-Tuning)
+from kitepy import LLM
 
-# Train EfficientNet-B0 with custom settings
-model = CNN("efficientnet_b0", num_classes=100)
-model.train("cifar100", epochs=50, lr=0.001)
+llm = LLM("Qwen/Qwen2.5-0.5B", pretrained=True, lora=True)
+llm.train("chat.jsonl", epochs=3, auto_plan=True)
+print(llm.generate("Summarize KitePy:", max_new_tokens=40))
 ```
 
-```python Vision Transformer
-from kitepy import Transformer
+```python Tabular & Audio
+from kitepy import Tabular, Audio
 
-# Train Vision Transformer
-model = Transformer("vit_base", pretrained=True)
-model.freeze_backbone()  # Transfer learning
-model.train("imagenet", epochs=10)
+Tabular("tabular_resnet", task="regression").train("housing.csv", epochs=15)
+Audio("audio_transformer").train("./audio_classes", epochs=10)
+```
+
+```python Multimodal & Generative
+from kitepy import VLM, Generative
+
+vlm = VLM("clip_tiny").train("pairs.jsonl", epochs=5)
+probs = vlm.predict("dog.jpg", texts=["a photo of a dog", "a car"])
+
+gen = Generative("vae_small").train("synthetic", epochs=5)
+images = gen.sample(n=4)
 ```
 </CodeGroup>
-
-## Supported Models
-
-kitepy supports an extensive range of models across multiple domains:
-
-| Category | Models | Examples |
-|----------|--------|----------|
-| **CNNs** | ResNet, EfficientNet, MobileNet, VGG, DenseNet | `resnet50`, `efficientnet_b3`, `mobilenet_v3_large` |
-| **Vision Transformers** | ViT, DeiT, Swin | `vit_base`, `swin_tiny`, `deit_small` |
-| **+ 800 more** | All timm models | Any model from timm library |
-
-<Info>
-**Coming Soon**: LLMs (GPT, LLaMA), VLMs (CLIP, BLIP), Audio (Whisper), and Diffusion models.
-</Info>
 
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Quickstart" icon="play" href="/quickstart">
-    Get up and running in 5 minutes
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Go from install to trained model and prediction in minutes
   </Card>
   <Card title="Installation" icon="download" href="/installation">
-    Install kitepy on your system
+    Core package, optional extras, and GPU setup
   </Card>
-  <Card title="Core Concepts" icon="book" href="/concepts/philosophy">
-    Learn the design principles
+  <Card title="Task Adapters" icon="diagram-project" href="/concepts/adapters">
+    Understand how every modality plugs into Engine
   </Card>
-  <Card title="API Reference" icon="code" href="/api-reference/cnn">
-    Explore the complete API
+  <Card title="BaseModel API" icon="code" href="/api-reference/base-model">
+    Inspect every shared method, argument, and return value
   </Card>
 </CardGroup>

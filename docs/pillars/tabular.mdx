@@ -1,0 +1,80 @@
+---
+title: 'Tabular Models'
+description: 'TabularResNet and TabularMLP for classification and regression on CSV, NumPy, and Tensor data'
+icon: 'table'
+---
+
+## Overview
+
+`Tabular` provides neural baselines (`TabularResNet` and `TabularMLP`) for both **classification** and **regression** across `.csv` files, `(X, y)` NumPy/Tensor tuples, and `"synthetic"` datasets.
+
+```python
+from kitepy import Tabular
+
+Tabular("tabular_resnet", task="classification").train("iris.csv", epochs=20)
+```
+
+---
+
+## Simple vs. Advanced Usage
+
+<CodeGroup>
+```python CSV Classification & Regression
+from kitepy import Tabular
+
+# Last CSV column is used as target automatically
+clf = Tabular("tabular_resnet", task="classification")
+clf.train("iris.csv", epochs=15)
+
+reg = Tabular("tabular_mlp", task="regression")
+reg.train("housing.csv", epochs=15)
+```
+
+```python NumPy / Tensor Tuple Input
+import numpy as np
+from kitepy import Tabular
+
+X = np.random.randn(200, 12).astype(np.float32)
+y = (X[:, 0] * 1.5 - X[:, 1]).astype(np.float32)
+
+model = Tabular("tabular_resnet", task="regression", input_dim=12, hidden_dims=[256, 128, 64])
+model.train((X, y), epochs=10, batch_size=32)
+
+# Continuous regression predictions
+preds = model.predict(X[:4], top_k=1)
+```
+
+```python Custom Tabular Module
+import torch.nn as nn
+from kitepy import Tabular
+
+custom_net = nn.Sequential(nn.Linear(12, 32), nn.ReLU(), nn.Linear(32, 3))
+model = Tabular(custom_net, input_dim=12, num_classes=3)
+prof = model.profile()  # Automatically uses shape (1, input_dim) before first train/predict
+```
+</CodeGroup>
+
+---
+
+## Presets (`TABULAR_PRESETS`)
+
+| Preset | Class | Default `hidden_dims` | Task Options |
+|---|---|---|---|
+| `"tabular_resnet"` | `TabularResNet` | `[128, 128, 64]` | `"classification"`, `"regression"` |
+| `"tabular_mlp"` | `TabularMLP` | `[128, 64]` | `"classification"`, `"regression"` |
+
+When `task="regression"`, `Tabular` automatically defaults to `loss="mse"`, `RegressionAdapter` (tracking `mae` and `rmse`), `out_dim=1`, and continuous `.predict()` / `.to_fastapi()` outputs.
+
+---
+
+## How CSV Preprocessing Works
+
+When passing a `.csv` path to `.train()` (`pandas` required):
+1. Treats the **last column** (`df.columns[-1]`) as the target and drops rows where the target is `NaN`.
+2. Applies `pd.get_dummies(df.drop(columns=[target_col]), drop_first=False)` for categorical feature columns.
+3. Imputes missing numeric features using column medians (`fillna(median).fillna(0.0)`), then standardizes features (`(vals - mean) / std`, clamping zero-variance columns to `std=1.0`).
+4. For `"classification"`, encodes categorical string/integer labels automatically and sets `num_classes` and `class_names`.
+
+<Note>
+**Inference Normalization Note (`v0.2.1`)**: Feature standardization and one-hot encoding run inside `load_tabular_data()` during CSV loading and are not stored inside `.save()` checkpoints. When calling `.predict()` on raw arrays after training on a CSV, pass pre-encoded, standardized numeric features matching `model.config.input_dim`.
+</Note>

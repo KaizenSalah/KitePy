@@ -1,0 +1,61 @@
+---
+title: 'Serialization & Security'
+description: 'Atomic writes, pickle-free SafeTensors bundles, lineage tracking, and strict weights_only loading'
+icon: 'lock'
+---
+
+## Overview
+
+KitePy treats model persistence as crash-safe and untrusted-input-safe by default:
+
+1. **Atomic File Writes**: `atomic_torch_save()` and `atomic_write_text()` write to a temporary file inside the target directory, `fsync()` when applicable, and atomically `os.replace()` — cleaning up temp files if an error occurs so an existing checkpoint is never corrupted.
+2. **Pickle-Free SafeTensors Bundles**: Saving with `safe=True`, a `.safetensors` suffix, or `safe_serialization=True` writes weights via `safetensors.torch.save_file()` and metadata into a companion `.meta.json` sidecar (`save_safe_bundle()` / `load_safe_bundle()`).
+3. **Strict `weights_only=True` Enforcement**: Both `BaseModel.load()` and `Engine._resume_if_requested()` refuse to deserialize unsafe pickle payloads (`weights_only=False`) unless explicitly opted into via `allow_unsafe=True` (or `allow_unsafe_checkpoint=True`).
+
+---
+
+## Saving & Loading Bundles
+
+```python
+from kitepy import Vision
+
+seg = Vision(task="segmentation", model="unet", num_classes=3)
+seg.train("synthetic", epochs=2, img_size=64, save_every_n_epochs=0)
+
+# Saves model.safetensors + model.meta.json + model.yaml
+seg.save("artifacts/model.safetensors", save_config=True, safe=True)
+
+# Preserves task="segmentation", num_classes=3, data_config, train_config, class_names, history
+reloaded = Vision.load("artifacts/model.safetensors", device="auto")
+```
+
+### Saving `.pt` Checkpoints Safely
+
+KitePy's `_to_jsonable()` and `get_lineage_metadata()` sanitize metadata into pure Python primitives (stripping subclasses like `torch.torch_version.TorchVersion` and converting `Path`s to `str`), so legitimate `.pt` checkpoints saved via `model.save("model.pt")` load cleanly under PyTorch's strict `weights_only=True`.
+
+---
+
+## Security & Error Guards
+
+| Scenario | KitePy Behavior |
+|---|---|
+| Untrusted `.pt` with custom pickle `__reduce__` payload | `BaseModel.load()` blocks execution and raises `RuntimeError` (`allow_unsafe=False` by default) |
+| Legacy trusted `.pt` needing arbitrary globals | Pass `ModelClass.load(path, allow_unsafe=True)` explicitly |
+| `.safetensors` exported via `export(..., format="safetensors")` without `.meta.json` | Raises a descriptive `ValueError` noting the missing sidecar (or pass `custom_model=YourNet()`) |
+| Saved from a custom `nn.Module` (`model_name == "custom"`) | Refuses silent load with `ValueError` unless `custom_model=YourNet()` is supplied |
+
+---
+
+## Lineage Metadata (`get_lineage_metadata`)
+
+Every saved bundle, checkpoint, and `execution_report` embeds:
+
+```python
+{
+    "kitepy_version": "0.2.1",
+    "torch_version": str(torch.__version__),
+    "python_version": "...",
+    "git_sha": "...",       # or None if outside git repo
+    "timestamp_utc": "...", # ISO-8601 UTC
+}
+```

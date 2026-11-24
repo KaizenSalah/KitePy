@@ -1,0 +1,43 @@
+---
+title: 'Generative'
+description: 'API reference for Generative, ConvVAE, and SimpleDDPM'
+icon: 'sparkles'
+---
+
+## `Generative`
+
+```python
+from kitepy import Generative
+```
+
+### Constructor
+
+```python
+Generative(
+    model: Optional[Union[str, nn.Module]] = "vae_small",
+    config: Optional[Union[Dict, GenerativeConfig, str]] = None,
+    **kwargs,
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `model` | `Optional[Union[str, nn.Module]]` | `"vae_small"` | `"vae_small"`, `"vae_base"`, `"ddpm_small"`, `"diffusers_unet"`, or custom `nn.Module` |
+| `config` | `Optional[Union[Dict, GenerativeConfig, str]]` | `None` | `GenerativeConfig`, `ExperimentConfig`, dict, or YAML/JSON path |
+| `**kwargs` | `Any` | — | Config overrides (`latent_dim`, `base_channels`, `img_size`, `timesteps`, `kl_weight`, etc.) |
+
+### `Generative.sample()`
+
+```python
+gen.sample(n: int = 4) -> torch.Tensor
+```
+
+Calls `self.model.sample(n=n, device=device)` under `@torch.no_grad()` in `eval()` mode (raises `NotImplementedError` if a custom module lacks `.sample(n)`).
+
+---
+
+## Built-In Architectures & Data Loader (`kitepy.pillars.generative`)
+
+- **`ConvVAE(in_channels=3, img_size=32, latent_dim=32, base_channels=32, kl_weight=0.001)`**: `encode`, `reparameterize`, `decode`, `forward -> (recon, mu, logvar)`, `sample(n, device)`.
+- **`SimpleDDPM(in_channels=3, img_size=32, base_channels=32, timesteps=100)`**: Linear beta schedule `[1e-4, 0.02]`, `compute_loss(x) -> (mse, pred_noise)`, `sample(n, device)`.
+- **`load_generative_data(dataset_name, data_config, train_config)`**: Uses `SyntheticGenerativeDataset` for `"synthetic"` / `None`, and delegates dataset names or folder paths to `load_vision_data_with_meta()`.

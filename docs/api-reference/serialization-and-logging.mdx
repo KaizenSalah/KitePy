@@ -1,0 +1,77 @@
+---
+title: 'Serialization & Logging'
+description: 'API reference for safe serialization bundles, atomic saves, lineage tracking, and rank-aware structured logging'
+icon: 'lock'
+---
+
+## Safe & Atomic Serialization (`kitepy.core.serialization`)
+
+```python
+from kitepy import (
+    atomic_torch_save,
+    get_lineage_metadata,
+    save_safe_bundle,
+    load_safe_bundle,
+    get_logger,
+    set_log_level,
+)
+from kitepy.core.serialization import atomic_write_text
+```
+
+### `get_lineage_metadata()`
+
+```python
+get_lineage_metadata() -> Dict[str, Any]
+```
+
+Returns `{"kitepy_version": "0.2.1", "torch_version": str(torch.__version__), "python_version": ..., "git_sha": ..., "timestamp_utc": ...}`.
+
+### `atomic_write_text()` & `atomic_torch_save()`
+
+```python
+atomic_write_text(content: str, path: Union[str, Path])
+atomic_torch_save(obj: Any, path: Union[str, Path])
+```
+
+Creates a temporary file in `Path(path).parent`, writes + `fsync()` (for text) / `torch.save()`, and atomically replaces via `os.replace()`. Cleans up the temp file on failure without corrupting the destination.
+
+### `save_safe_bundle()` & `load_safe_bundle()`
+
+```python
+save_safe_bundle(
+    state_dict: Dict[str, torch.Tensor],
+    metadata: Dict[str, Any],
+    path: Union[str, Path],
+) -> Tuple[Path, Path]
+
+load_safe_bundle(path: Union[str, Path]) -> Tuple[Dict[str, torch.Tensor], Dict[str, Any]]
+```
+
+Saves tensors to `.safetensors` (forcing `.safetensors` suffix, CPU contiguous tensors) and writes `<stem>.meta.json` atomically. `load_safe_bundle()` deserializes without executing pickle bytecode.
+
+---
+
+## Rank-Aware Structured Logging (`kitepy.core.logging`)
+
+### `get_logger()`
+
+```python
+get_logger(
+    name: str = "kitepy",
+    level: Optional[str] = None,
+    log_file: Optional[str] = None,
+    json_file: Optional[str] = None,
+) -> logging.Logger
+```
+
+- Resolves global rank via `RANK`, `ACCELERATE_PROCESS_INDEX`, and `SLURM_PROCID` environment variables.
+- Console and file handlers emit only on global rank `0`.
+- Reads default level from `KITEPY_LOG_LEVEL` env var (defaults to `"INFO"`).
+- `json_file` writes UTC ISO-8601 JSON lines containing `timestamp`, `level`, `logger`, `message`, and optional `metrics` payload.
+- Supports `structured_only=True` extra flag to write events exclusively to `json_file` without cluttering stdout.
+
+### `set_log_level()`
+
+```python
+set_log_level(level: str)  # "DEBUG", "INFO", "WARNING", "ERROR", "SILENT"
+```

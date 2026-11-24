@@ -1,66 +1,41 @@
 ---
 title: 'Transfer Learning'
-description: 'Fine-tuning pretrained models'
-icon: 'share'
+description: 'Multi-stage transfer learning with custom ImageFolders and class balancing'
+icon: 'layer-group'
 ---
 
-## Overview
-
-Fine-tune a pretrained model on your custom dataset.
-
-## Full Code
+## Balanced Custom ImageFolder Transfer Learning
 
 ```python
-"""
-Transfer learning example with kitepy.
-"""
-from kitepy import CNN
+from kitepy import CNN, EarlyStopping, CSVLogger
 
-def main():
-    # Load pretrained ResNet-50
-    model = CNN("resnet50", pretrained=True, num_classes=10)
-    
-    # Phase 1: Freeze backbone, train only classifier
-    print("Phase 1: Training classifier only...")
-    model.freeze_backbone()
-    model.train(
-        "my_dataset",
-        epochs=10,
-        lr=0.01,  # Higher LR for untrained layer
-        batch_size=32,
-    )
-    
-    # Phase 2: Unfreeze and fine-tune entire model
-    print("\nPhase 2: Fine-tuning entire model...")
-    model.unfreeze()
-    model.train(
-        "my_dataset",
-        epochs=50,
-        lr=0.0001,  # Lower LR for pretrained weights
-        batch_size=32,
-    )
-    
-    # Evaluate
-    metrics = model.evaluate("my_dataset")
-    print(f"\nFinal Accuracy: {metrics['accuracy']:.2f}%")
-    
-    # Save
-    model.save("fine_tuned_model.pt")
+# Automatically detects classes from ./my_images/{class_a,class_b,...}
+# and computes inverse-frequency class weights when classes are imbalanced
+model = CNN("convnext_tiny", pretrained=True)
+model.freeze_backbone()
 
-if __name__ == "__main__":
-    main()
+model.train(
+    "./my_images",
+    epochs=5,
+    batch_size=32,
+    lr=1e-3,
+    class_weights="balanced",
+    augmentation="randaugment",
+)
+
+# Unfreeze last 2 stages, add MixUp + CutMix and callbacks
+model.unfreeze(layers=2)
+model.train(
+    "./my_images",
+    epochs=10,
+    batch_size=32,
+    lr={"backbone": 1e-4, "head": 5e-4},
+    class_weights="balanced",
+    mixup_alpha=0.2,
+    ema=True,
+    callbacks=[
+        EarlyStopping(monitor="val_loss", patience=3),
+        CSVLogger(log_dir="./logs", filename="transfer.csv"),
+    ],
+)
 ```
-
-## Key Steps
-
-1. **Load pretrained** - `pretrained=True`
-2. **Freeze backbone** - `model.freeze_backbone()`
-3. **Train classifier** - High LR, few epochs
-4. **Unfreeze** - `model.unfreeze()`
-5. **Fine-tune** - Low LR, more epochs
-
-## Tips
-
-- Use lower LR after unfreezing (10x-100x lower)
-- Add regularization for small datasets
-- Use data augmentation

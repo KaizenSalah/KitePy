@@ -1,0 +1,42 @@
+---
+title: 'Tabular'
+description: 'API reference for Tabular, TabularResNet, TabularMLP, and CSV/NumPy loading'
+icon: 'table'
+---
+
+## `Tabular`
+
+```python
+from kitepy import Tabular
+```
+
+### Constructor
+
+```python
+Tabular(
+    model: Optional[Union[str, nn.Module]] = "tabular_resnet",
+    config: Optional[Union[Dict, TabularConfig, str]] = None,
+    task: str = "classification",
+    **kwargs,
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `model` | `Optional[Union[str, nn.Module]]` | `"tabular_resnet"` | `"tabular_resnet"`, `"tabular_mlp"`, or custom `nn.Module` |
+| `config` | `Optional[Union[Dict, TabularConfig, str]]` | `None` | `TabularConfig`, `ExperimentConfig`, dict, or YAML/JSON path |
+| `task` | `str` | `"classification"` | `"classification"` (`ClassificationAdapter`) or `"regression"` (`RegressionAdapter`, defaults `loss="mse"`, `out_dim=1`) |
+| `**kwargs` | `Any` | — | Config overrides |
+
+### Input Handling & Default Shape
+
+- `_preprocess_input(input_data)`: converts `Tensor`, NumPy arrays, or numeric lists to float32 `Tensor` (unsqueezing 1D samples `(F,)` to `(1, F)`).
+- `_default_input_shape()`: returns `(1, self.config.input_dim)`.
+
+---
+
+## Built-In Architectures & Data Loader (`kitepy.pillars.tabular`)
+
+- **`TabularResNet(input_dim: int, hidden_dims: List[int], out_dim: int, dropout: float = 0.1)`**
+- **`TabularMLP(input_dim: int, hidden_dims: List[int], out_dim: int, dropout: float = 0.1)`**
+- **`load_tabular_data(dataset_name, data_config, train_config)`**: Supports `"synthetic"`, `(X, y)` tuple of arrays/tensors, and `.csv` paths (target = last column, `get_dummies`, median NaN imputation, feature standardization, 80/20 split via `val_split`).

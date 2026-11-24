@@ -1,284 +1,110 @@
 ---
 title: 'CNN Models'
-description: 'Train Convolutional Neural Networks with kitepy'
+description: 'Train and deploy 800+ Convolutional Neural Networks with KitePy'
 icon: 'image'
 ---
 
 ## Overview
 
-The `CNN` class provides a simple interface for training convolutional neural networks. It supports 30+ architectures out of the box, plus all 800+ models from the timm library.
-
-## Basic Usage
+`CNN` provides a unified interface for image classification over KitePy's built-in presets, any model in `timm`, or any custom `torch.nn.Module`. Model names are validated eagerly at construction with close-match typo suggestions via `validate_vision_model_name()`.
 
 ```python
 from kitepy import CNN
 
-# Train ResNet-18 on CIFAR-10
-model = CNN("resnet18")
-model.train("cifar10")
+model = CNN("resnet18").train("cifar10")
 ```
 
-## Supported Architectures
+---
 
-### ResNet Family
+## Simple vs. Advanced Usage
 
-```python
-CNN("resnet18").train("cifar10")   # 11.7M params
-CNN("resnet34").train("cifar10")   # 21.8M params
-CNN("resnet50").train("cifar10")   # 25.6M params
-CNN("resnet101").train("cifar10")  # 44.5M params
-CNN("resnet152").train("cifar10")  # 60.2M params
-```
-
-### EfficientNet Family
-
-```python
-CNN("efficientnet_b0").train("cifar10")  # 5.3M params
-CNN("efficientnet_b1").train("cifar10")  # 7.8M params
-CNN("efficientnet_b2").train("cifar10")  # 9.1M params
-CNN("efficientnet_b3").train("cifar10")  # 12M params
-CNN("efficientnet_b4").train("cifar10")  # 19M params
-CNN("efficientnet_b5").train("cifar10")  # 30M params
-CNN("efficientnet_b6").train("cifar10")  # 43M params
-CNN("efficientnet_b7").train("cifar10")  # 66M params
-```
-
-### MobileNet Family
-
-Perfect for mobile and edge deployment:
-
-```python
-CNN("mobilenet_v2").train("cifar10")       # 3.5M params
-CNN("mobilenet_v3_small").train("cifar10") # 2.5M params
-CNN("mobilenet_v3_large").train("cifar10") # 5.5M params
-```
-
-### Other Architectures
-
-```python
-# VGG
-CNN("vgg16").train("cifar10")
-CNN("vgg19").train("cifar10")
-
-# DenseNet
-CNN("densenet121").train("cifar10")
-CNN("densenet169").train("cifar10")
-
-# Wide ResNet
-CNN("wide_resnet50").train("cifar10")
-
-# ResNeXt
-CNN("resnext50").train("cifar10")
-CNN("resnext101").train("cifar10")
-```
-
-### Using timm Models Directly
-
-Any model from [timm](https://github.com/huggingface/pytorch-image-models) works:
-
-```python
-# Use exact timm model names
-CNN("convnext_tiny").train("cifar10")
-CNN("regnetx_016").train("cifar10")
-CNN("rexnet_100").train("cifar10")
-```
-
-<Tip>
-To see all 800+ available models, you can run:
-
-```python
-import timm
-print(timm.list_models())
-```
-</Tip>
-
-## Pretrained Weights
-
-Load ImageNet pretrained weights for transfer learning:
-
-```python
-model = CNN("resnet50", pretrained=True)
-model.train("my_dataset")  # Fine-tune on your data
-```
-
-Pretrained weights are available for most popular architectures.
-
-## Custom Number of Classes
-
-Adapt the model for your number of classes:
-
-```python
-# CIFAR-100 has 100 classes
-model = CNN("resnet50", num_classes=100)
-model.train("cifar100")
-
-# Binary classification
-model = CNN("efficientnet_b0", num_classes=2)
-model.train("my_binary_dataset")
-```
-
-## Transfer Learning
-
-### Freeze and Fine-Tune
-
-```python
+<CodeGroup>
+```python Minimal (1-Liner)
 from kitepy import CNN
 
-# Load pretrained model
-model = CNN("resnet50", pretrained=True, num_classes=10)
-
-# Phase 1: Freeze backbone, train only classifier
-model.freeze_backbone()
-model.train("my_dataset", epochs=10, lr=0.01)
-
-# Phase 2: Unfreeze and fine-tune entire model
-model.unfreeze()
-model.train("my_dataset", epochs=50, lr=0.0001)
+CNN("resnet18").train("cifar10", epochs=5)
 ```
 
-### Gradual Unfreezing
+```python Custom Folder + Inference
+from kitepy import CNN
 
-```python
-# Unfreeze last N layers only
-model.unfreeze(layers=10)  # Unfreeze last 10 layers
+model = CNN("convnext_tiny", pretrained=True)
+model.train("./datasets/flowers", epochs=15, batch_size=32, ema=True)
+
+preds = model.predict("daisy.jpg", top_k=3)
+# [{'class_id': 0, 'label': 'daisy', 'confidence': 0.91}, ...]
 ```
 
-## Custom CNN Architecture
+```python Full CNNConfig + Augmentation
+from kitepy import CNN, CNNConfig
 
-Pass your own PyTorch model:
-
-```python
-import torch.nn as nn
-
-# Define custom architecture
-custom_model = nn.Sequential(
-    nn.Conv2d(3, 64, kernel_size=3, padding=1),
-    nn.BatchNorm2d(64),
-    nn.ReLU(),
-    nn.MaxPool2d(2),
-    
-    nn.Conv2d(64, 128, kernel_size=3, padding=1),
-    nn.BatchNorm2d(128),
-    nn.ReLU(),
-    nn.MaxPool2d(2),
-    
-    nn.Conv2d(128, 256, kernel_size=3, padding=1),
-    nn.BatchNorm2d(256),
-    nn.ReLU(),
-    nn.AdaptiveAvgPool2d(1),
-    
-    nn.Flatten(),
-    nn.Linear(256, 10)
+cfg = CNNConfig(
+    arch="resnet",
+    depth=50,
+    num_classes=100,
+    in_channels=3,
+    pretrained=True,
+    drop_rate=0.2,
+    drop_path_rate=0.1,
+    freeze_backbone=False,
 )
 
-# Use with kitepy
-model = CNN(custom_model)
-model.train("cifar10")
+model = CNN("resnet50", config=cfg)
+model.train(
+    "cifar100",
+    epochs=30,
+    batch_size=64,
+    lr=5e-4,
+    augmentation="randaugment",
+    mixup_alpha=0.2,
+    label_smoothing=0.1,
+)
 ```
 
-## Model Inspection
+```python Custom PyTorch nn.Module
+import torch.nn as nn
+from kitepy import CNN
 
-### Describe Model
+net = nn.Sequential(
+    nn.Conv2d(3, 32, 3, padding=1),
+    nn.ReLU(),
+    nn.AdaptiveAvgPool2d(1),
+    nn.Flatten(),
+    nn.Linear(32, 10),
+)
 
-```python
-model = CNN("resnet50", num_classes=10)
-model.describe()
+model = CNN(net)
+model.train("synthetic", img_size=32, epochs=2)
 ```
+</CodeGroup>
 
-Output:
-```
-======================================================================
-Model: CNN
-Name: resnet50
-Modality: vision
-Trained: False
-======================================================================
+---
 
-📋 Configuration:
-{
-  "arch": "resnet",
-  "depth": 50,
-  "num_classes": 10,
-  "pretrained": false,
-  ...
-}
+## Built-In `CNN_PRESETS` & Aliases
 
-🏗️  Architecture:
-  Total parameters: 25,557,032
-  Trainable parameters: 25,557,032
-```
+| Family | Preset Names |
+|--------|--------------|
+| **ResNet** | `resnet18`, `resnet34`, `resnet50`, `resnet101`, `resnet152` |
+| **Wide ResNet** | `wide_resnet50`, `wide_resnet101` (mapped to `wide_resnet50_2`, `wide_resnet101_2` in `timm`) |
+| **ResNeXt** | `resnext50`, `resnext101` (mapped to `resnext50_32x4d`, `resnext101_32x8d` in `timm`) |
+| **EfficientNet** | `efficientnet_b0` through `efficientnet_b7` |
+| **EfficientNetV2** | `efficientnetv2_s`, `efficientnetv2_m`, `efficientnetv2_l` (`tf_efficientnetv2_*` in `timm`) |
+| **MobileNet** | `mobilenet_v2` (`mobilenetv2_100`), `mobilenet_v3_small` (`mobilenetv3_small_100`), `mobilenet_v3_large` (`mobilenetv3_large_100`) |
+| **VGG** | `vgg11`, `vgg13`, `vgg16`, `vgg19` |
+| **DenseNet** | `densenet121`, `densenet169`, `densenet201` |
+| **ConvNeXt** | `convnext_tiny`, `convnext_small`, `convnext_base`, `convnext_large` |
 
-### Profile Performance
+Any other model ID available in `timm.list_models()` (for example `"regnetx_016"`, `"eva02_tiny_patch14_224"`) also works directly. Check programmatically with `list_models("cnn")` or `list_timm_models()`.
 
-```python
-profile = model.profile()
-print(f"Parameters: {profile['total_params']:,}")
-print(f"Model size: {profile['model_size_mb']:.1f} MB")
-print(f"Latency: {profile['latency_ms']:.1f} ms")
-print(f"Throughput: {profile['throughput']:.1f} samples/sec")
-```
+---
 
-## Inference
+## Real-World Prediction Inputs
 
-### Single Image
+`_VisionMixin._preprocess_input()` accepts all of the following in `.predict(inputs, return_probs=False, top_k=None)`:
+- `torch.Tensor` `(B, C, H, W)` or single `(C, H, W)`
+- `np.ndarray` `(B, C, H, W)`, `(H, W, C)`, or grayscale `(H, W)`
+- `PIL.Image.Image`
+- Image file path (`str` or `pathlib.Path`)
+- A Python `list` of paths, PIL Images, NumPy arrays, tensors, or nested numeric pixel lists (JSON payloads)
 
-```python
-import torch
-from PIL import Image
-from torchvision import transforms
-
-# Load trained model
-model = CNN.load("my_model.pt")
-
-# Preprocess image
-transform = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
-
-image = Image.open("cat.jpg")
-input_tensor = transform(image).unsqueeze(0)
-
-# Predict
-output = model.predict(input_tensor)
-predicted_class = output.argmax(dim=1).item()
-print(f"Predicted class: {predicted_class}")
-```
-
-### Batch Inference
-
-```python
-# Process multiple images
-outputs = model.predict(batch_of_images)
-predictions = outputs.argmax(dim=1)
-```
-
-## Save and Load
-
-```python
-# Train and save
-model = CNN("resnet18")
-model.train("cifar10", epochs=10)
-model.save("my_resnet18.pt")
-
-# Load later
-loaded_model = CNN.load("my_resnet18.pt")
-loaded_model.evaluate("cifar10")
-```
-
-## List Available Models
-
-```python
-from kitepy import list_models
-
-# List all CNN presets
-cnn_models = list_models("cnn")
-print(cnn_models)
-# ['resnet18', 'resnet34', 'resnet50', 'efficientnet_b0', ...]
-```
-
-## API Reference
-
-See the full [CNN API Reference](/api-reference/cnn) for all methods and parameters.
+Images loaded from file paths, PIL, or HWC NumPy arrays automatically apply validation transforms (`get_val_transforms(img_size, grayscale=(in_channels == 1))`).

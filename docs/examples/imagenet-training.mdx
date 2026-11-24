@@ -1,69 +1,53 @@
 ---
 title: 'ImageNet Training'
-description: 'Training on ImageNet-1K'
-icon: 'mountain'
+description: 'Train models on local ImageNet directories with multi-GPU Accelerate and checkpointing'
+icon: 'database'
 ---
 
-## Overview
+## Directory Layout
 
-Training large-scale models on ImageNet.
+Place ImageNet under `<data_dir>/imagenet/{train,val}`:
 
-## Basic Training
-
-```python
-from kitepy import CNN
-
-model = CNN("resnet50", pretrained=False)
-model.train("imagenet", epochs=90)
+```text
+data/
+└── imagenet/
+    ├── train/ ...
+    └── val/   ...
 ```
 
-## Optimized Recipe
+## Multi-GPU Training Configuration
 
 ```python
-model = CNN("resnet50")
+from kitepy import CNN, EarlyStopping, ModelCheckpoint, CSVLogger
 
+model = CNN("resnet50", pretrained=False)
 model.train(
     "imagenet",
+    data_dir="./data",
     epochs=90,
-    batch_size=256,
+    batch_size=64,
+    gradient_accumulation_steps=4,
     lr=0.1,
     optimizer="sgd",
     optimizer_kwargs={"momentum": 0.9},
-    scheduler="multistep",
-    scheduler_kwargs={"milestones": [30, 60, 80], "gamma": 0.1},
     weight_decay=1e-4,
-    warmup_steps=5000,
-)
-```
-
-## Vision Transformer on ImageNet
-
-```python
-from kitepy import Transformer
-
-model = Transformer("vit_base", pretrained=True)
-
-model.train(
-    "imagenet",
-    epochs=300,
-    batch_size=1024,  # Use gradient accumulation if needed
-    lr=1e-3,
-    optimizer="adamw",
     scheduler="cosine",
-    weight_decay=0.3,
-    warmup_steps=10000,
+    warmup_steps=0.05,
     augmentation="randaugment",
+    label_smoothing=0.1,
+    ema=True,
+    use_accelerate=True,
+    checkpoint_dir="./checkpoints/imagenet",
+    callbacks=[
+        EarlyStopping(monitor="val_loss", patience=10),
+        ModelCheckpoint(filepath="./checkpoints/imagenet/best.pt", save_best_only=True),
+        CSVLogger(log_dir="./logs/imagenet"),
+    ],
 )
 ```
 
-## Memory Tips
+Launch across GPUs with Accelerate:
 
-```python
-model.train(
-    "imagenet",
-    batch_size=64,
-    gradient_accumulation_steps=4,  # Effective: 256
-    gradient_checkpointing=True,
-    mixed_precision=True,
-)
+```bash
+accelerate launch --multi_gpu train_imagenet.py
 ```

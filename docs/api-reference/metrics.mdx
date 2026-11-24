@@ -1,27 +1,48 @@
 ---
 title: 'Metrics'
-description: 'API reference for training metrics'
+description: 'API reference for MetricTracker, accuracy, and precision_recall_f1 (kitepy.core.metrics)'
 icon: 'chart-simple'
 ---
 
-## Training Metrics
-
-| Metric | Description |
-|--------|-------------|
-| `train_loss` | Training loss per epoch |
-| `train_acc` | Training accuracy |
-| `val_loss` | Validation loss |
-| `val_acc` | Validation accuracy |
-| `learning_rate` | Current LR |
-
 ```python
-history = model.train("cifar10", epochs=10)
-print(history)
+from kitepy import MetricTracker, accuracy, precision_recall_f1
 ```
 
-## Evaluation Metrics
+---
+
+## `MetricTracker`
 
 ```python
-metrics = model.evaluate("cifar10")
-# {'loss': 0.523, 'accuracy': 85.4, 'top5_accuracy': 97.2}
+tracker = MetricTracker(num_classes: Optional[int] = None)
 ```
+
+### Methods
+
+- **`reset()`**: Resets counters (`correct`, `total`, `loss_sum`, `loss_count`, TP/FP/FN, predictions, targets).
+- **`update(output: torch.Tensor, target: torch.Tensor, loss: Optional[float] = None)`**: Accumulates batch logits `(B, C)`, labels `(B,)`, and optional scalar loss.
+- **`compute() -> Dict[str, float]`**: Returns `{"accuracy": float, "loss": float, "precision": float, "recall": float, "f1": float}` (`accuracy` on `0..100` scale; `precision`/`recall`/`f1` macro-averaged).
+- **`get_confusion_matrix() -> torch.Tensor`**: Returns `(num_classes, num_classes)` integer tensor with `matrix[true, pred]`.
+
+---
+
+## Functions
+
+### `accuracy()`
+
+```python
+accuracy(output: torch.Tensor, target: torch.Tensor, topk: tuple = (1,)) -> List[float]
+```
+
+Returns list of percentage top-k accuracies matching each `k` in `topk`.
+
+### `precision_recall_f1()`
+
+```python
+precision_recall_f1(
+    output: torch.Tensor,
+    target: torch.Tensor,
+    average: str = "macro",
+) -> Dict[str, float]
+```
+
+Supports `average` in `("macro", "micro", "weighted")`; returns `{"precision": float, "recall": float, "f1": float}`.

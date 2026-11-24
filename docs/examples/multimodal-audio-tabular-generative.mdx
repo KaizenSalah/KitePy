@@ -1,0 +1,57 @@
+---
+title: 'Multimodal, Audio, Tabular & Generative'
+description: 'Complete end-to-end recipes across VLM, Audio, Tabular, and Generative pillars'
+icon: 'cubes'
+---
+
+## Four Pillars in One Page
+
+<CodeGroup>
+```python Multimodal VLM (CLIP)
+from kitepy import VLM
+
+vlm = VLM("clip_tiny", projection_dim=128, img_size=64)
+vlm.train("synthetic", epochs=3, batch_size=8, save_every_n_epochs=0)
+
+# Score candidate captions against an image tensor or file path
+import torch
+probs = vlm.predict(torch.randn(1, 3, 64, 64), texts=["cat", "dog", "bird"])
+print("Zero-shot probs:", probs)
+```
+
+```python Audio (.wav Folder & Waveform Predict)
+import torch
+from kitepy import Audio
+
+au = Audio("audio_transformer")  # or "audio_cnn"
+au.train("synthetic", epochs=3, batch_size=8, save_every_n_epochs=0)
+
+# Supports short or full raw 1D waveforms as well as 4D spectrograms
+print("Short 64-sample predict:", au.predict(torch.randn(64)).shape)
+print("1-second waveform predict:", au.predict(torch.randn(16000)).shape)
+```
+
+```python Tabular (CSV & NumPy)
+import numpy as np
+from kitepy import Tabular
+
+X = np.random.randn(120, 8).astype(np.float32)
+y = (X[:, 0] * 2.0 - X[:, 1]).astype(np.float32)
+
+reg = Tabular("tabular_resnet", task="regression", input_dim=8)
+reg.train((X, y), epochs=10, batch_size=16, save_every_n_epochs=0)
+print("Continuous predictions:", reg.predict(X[:3], top_k=3))
+```
+
+```python Generative (VAE & DDPM)
+from kitepy import Generative
+
+vae = Generative("vae_small", img_size=32, latent_dim=32)
+vae.train("synthetic", epochs=3, batch_size=8, save_every_n_epochs=0)
+print("VAE samples:", vae.sample(n=4).shape)
+
+ddpm = Generative("ddpm_small", img_size=32, timesteps=100)
+ddpm.train("synthetic", epochs=3, batch_size=8, save_every_n_epochs=0)
+print("DDPM samples:", ddpm.sample(n=2).shape)
+```
+</CodeGroup>

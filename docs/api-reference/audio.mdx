@@ -1,0 +1,44 @@
+---
+title: 'Audio'
+description: 'API reference for Audio, AudioCNN, AudioTransformer, and spectrogram preprocessing'
+icon: 'waveform-lines'
+---
+
+## `Audio`
+
+```python
+from kitepy import Audio
+```
+
+### Constructor
+
+```python
+Audio(
+    model: Optional[Union[str, nn.Module]] = "audio_cnn",
+    config: Optional[Union[Dict, AudioConfig, str]] = None,
+    **kwargs,
+)
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `model` | `Optional[Union[str, nn.Module]]` | `"audio_cnn"` | `"audio_cnn"`, `"audio_transformer"`, HuggingFace audio model ID (`pretrained=True`), or custom `nn.Module` |
+| `config` | `Optional[Union[Dict, AudioConfig, str]]` | `None` | `AudioConfig`, `ExperimentConfig`, dict, or YAML/JSON path |
+| `**kwargs` | `Any` | — | Config overrides |
+
+### Input Preprocessing (`_preprocess_input`)
+
+- Uses HuggingFace `AutoFeatureExtractor` when a pretrained HF audio model is loaded.
+- Otherwise converts inputs to float32 `Tensor`:
+  - `1D` `(samples,)` or `2D` `(B, samples)` waveforms: rejects empty `0`-sample waveforms (`ValueError`), zero-pads `< 256` samples, computes log-STFT (`n_fft=256, hop_length=128`), and resizes to `(64, 128)`.
+  - `3D` `(1, F, T)` or `4D` `(B, 1, F, T)` spectrograms pass straight through (3D unsqueezed to 4D).
+
+---
+
+## Built-In Architectures & Helpers (`kitepy.pillars.audio`)
+
+- **`AudioCNN(in_channels: int = 1, hidden_dim: int = 128, num_classes: int = 10)`**
+- **`AudioTransformer(in_channels: int = 1, hidden_dim: int = 192, num_classes: int = 10)`**
+- **`waveform_to_spectrogram(wav: torch.Tensor, n_mels: int = 64, num_frames: int = 128) -> torch.Tensor`**
+- **`AudioFolderDataset(samples, classes, n_mels=64, num_frames=128)`**
+- **`load_audio_data(dataset_name, data_config, train_config)`**: Loads `"synthetic"`, class-subfolder directories (`.wav`, `.flac`, `.ogg`, `.mp3`), or `.jsonl`/`.csv` manifests.

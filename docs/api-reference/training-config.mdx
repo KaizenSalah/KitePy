@@ -1,0 +1,116 @@
+---
+title: 'TrainingConfig'
+description: 'API reference for every parameter in TrainingConfig (kitepy.core.config)'
+icon: 'sliders'
+---
+
+## Overview
+
+`TrainingConfig` (`kitepy/core/config.py`) holds every training, optimizer, precision, planning, recovery, logging, and callback parameter. Any field can also be passed directly as a keyword argument to `model.train(...)`.
+
+```python
+from kitepy import TrainingConfig
+```
+
+---
+
+## Duration & Batching
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `epochs` | `int` | `10` | Number of training epochs |
+| `max_steps` | `Optional[int]` | `None` | Stop after N optimizer steps (auto-computes needed epochs if `max_epochs <= start_epoch`) |
+| `batch_size` | `Union[int, str]` | `32` | Batch size integer or `"auto"` |
+| `gradient_accumulation_steps` | `int` | `1` | Micro-batches accumulated per optimizer step (`>= 1`) |
+
+## Learning Rate, Optimizer & Scheduler
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `lr` | `Union[float, str, Dict[str, float]]` | `1e-3` | Scalar float, `"auto"`, or `{"backbone": float, "head": float}` |
+| `backbone_lr_mult` | `Optional[float]` | `None` | Multiplier applied to non-head params when `lr` is scalar |
+| `layer_decay` | `Optional[float]` | `None` | Exponential layer-wise LR decay factor across transformer/resnet blocks |
+| `lr_find` | `bool` | `False` | Run `LRFinder` automatically before epoch 1 |
+| `lr_find_min` | `float` | `1e-7` | Minimum LR for range test |
+| `lr_find_max` | `float` | `10.0` | Maximum LR for range test |
+| `lr_find_num_steps` | `int` | `100` | Maximum range test steps (clamped by `min(lr_find_num_steps, max(10, len(loader)*2))`) |
+| `weight_decay` | `float` | `0.01` | Weight decay applied to non-bias/non-norm `>=2D` weights |
+| `warmup_steps` | `Union[int, float]` | `0` | Integer steps or float fraction (`0 < f < 1`) of total optimizer steps |
+| `optimizer` | `Union[str, Any]` | `"adamw"` | `"adam"`, `"adamw"`, `"sgd"`, `"rmsprop"`, `"adadelta"`, `"adagrad"`, `"adamax"`, `"nadam"`, `"radam"`, `"lion"`, callable, or `Optimizer` instance |
+| `optimizer_kwargs` | `Dict[str, Any]` | `{}` | Extra kwargs forwarded to optimizer constructor |
+| `scheduler` | `Union[str, Any]` | `"cosine"` | `"none"`, `"constant"`, `"cosine"`, `"linear"`, `"step"`, `"multistep"`, `"exponential"`, `"polynomial"`, `"onecycle"`, `"warmup_cosine"`, `"cosine_warmup"`, `"plateau"`, callable, or `LRScheduler` |
+| `scheduler_kwargs` | `Dict[str, Any]` | `{}` | Extra kwargs forwarded to scheduler constructor |
+
+## Regularization & Vision Batch Augmentation
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `max_grad_norm` | `float` | `1.0` | Gradient clipping norm (`<= 0` disables clipping) |
+| `dropout` | `float` | `0.0` | Dropout value stored on config (also routed to model configs having `dropout`) |
+| `label_smoothing` | `float` | `0.0` | Label smoothing factor for cross-entropy loss |
+| `ema` | `bool` | `False` | Maintain `ModelEMA` shadow weights for validation & final weights |
+| `ema_decay` | `float` | `0.9999` | Target EMA decay |
+| `mixup_alpha` | `float` | `0.0` | Beta distribution alpha for image MixUp (`> 0` enables) |
+| `cutmix_alpha` | `float` | `0.0` | Beta distribution alpha for image CutMix (`> 0` enables) |
+
+## Precision, Compilation, & Distributed
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `mixed_precision` | `Union[bool, str]` | `True` | `True` (`auto`), `"bf16"`, `"fp16"`, `False`, `"fp32"`, `"no"`, or `None` |
+| `amp_dtype` | `Literal["auto", "fp16", "bf16"]` | `"auto"` | Preferred AMP dtype when `mixed_precision=True` |
+| `compile` | `bool` | `False` | Wrap model with `torch.compile()` |
+| `compile_mode` | `str` | `"default"` | `mode=` passed to `torch.compile()` |
+| `strategy` | `Literal["auto", "ddp", "fsdp", "deepspeed"]` | `"auto"` | Distributed strategy metadata |
+| `use_accelerate` | `bool` | `False` | Enable HuggingFace `Accelerator` distributed training and metric reduction |
+| `num_nodes` | `int` | `1` | Node count field |
+| `devices` | `Union[int, str]` | `"auto"` | `"auto"`, `"cpu"`, `"cuda"`, `"mps"`, CUDA device string, or GPU index `int` |
+| `gradient_checkpointing` | `bool` | `False` | Calls `model.gradient_checkpointing_enable()` when supported |
+
+## Checkpointing, Validation & Logging
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `save_every_n_epochs` | `Optional[int]` | `1` | Engine checkpoint interval (`0` or `None` disables periodic Engine checkpoints) |
+| `save_top_k` | `int` | `3` | Top-K checkpoints retained by metric in `checkpoint_dir` |
+| `checkpoint_dir` | `str` | `"./checkpoints"` | Directory for Engine checkpoints |
+| `resume_from_checkpoint` | `Optional[str]` | `None` | Checkpoint path to resume model/optimizer/scheduler/scaler/EMA/history from |
+| `log_every_n_steps` | `int` | `50` | Progress bar loss update interval |
+| `val_check_interval` | `Union[int, float]` | `1.0` | Fraction of epoch or integer batch interval for mid-epoch validation |
+| `val_every_n_epochs` | `int` | `1` | Epoch cadence for running validation (always validates final epoch) |
+| `csv_log_dir` | `Optional[str]` | `None` | Auto-attaches `CSVLogger(log_dir=...)` |
+| `tensorboard_dir` | `Optional[str]` | `None` | Auto-attaches `TensorBoardLogger(log_dir=...)` |
+| `wandb_project` | `Optional[str]` | `None` | Auto-attaches `WandbLogger(project=...)` |
+| `early_stopping` | `bool` | `False` | Built-in Engine early stopping on `val_loss` |
+| `early_stopping_patience` | `int` | `3` | Epochs without improvement before stopping |
+| `early_stopping_min_delta` | `float` | `1e-4` | Minimum improvement threshold on `val_loss` |
+
+## Reproducibility, Performance & Debugging
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `seed` | `int` | `42` | Random seed across Python, NumPy, and PyTorch |
+| `deterministic` | `bool` | `False` | Deterministic cuDNN & PyTorch algorithms |
+| `num_workers` | `int` | `4` | DataLoader worker count |
+| `pin_memory` | `bool` | `True` | Pin CPU memory for faster CUDA transfers (auto-disabled if CUDA unavailable) |
+| `prefetch_factor` | `int` | `2` | DataLoader prefetch factor field |
+| `fast_dev_run` | `bool` | `False` | Forces 1 epoch, 1 train batch, and 1 val batch |
+| `overfit_batches` | `Union[int, float]` | `0` | Subset count or fraction of batches cached to verify overfitting |
+| `detect_anomaly` | `bool` | `False` | Wraps forward/backward passes in `torch.autograd.detect_anomaly()` |
+
+## Task, Planning, Fault Recovery, & Hooks
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `task` | `Optional[str]` | `None` | Overrides `TaskAdapter` registry key (`"classification"`, `"binary"`, etc.) |
+| `loss` | `Union[str, Any]` | `"cross_entropy"` | Built-in loss name, `nn.Module`, or callable |
+| `class_weights` | `Optional[Union[List[float], str, Any]]` | `None` | Class weight list, Tensor, or `"balanced"` |
+| `auto_plan` | `bool` | `False` | Run pre-flight `ExecutionPlanner` before epoch loop |
+| `memory_budget_mb` | `Optional[float]` | `None` | Explicit VRAM/memory budget in MB (triggers `ExecutionPlanner`) |
+| `auto_recover` | `bool` | `True` | Enable `RuntimeGuard` OOM splitting and NaN/Inf gradient skip guard |
+| `max_consecutive_nan_steps` | `int` | `5` | Raises `RuntimeError` after N consecutive non-finite steps |
+| `log_level` | `str` | `"INFO"` | `"DEBUG"`, `"INFO"`, `"WARNING"`, `"ERROR"`, `"SILENT"` |
+| `structured_log_file` | `Optional[str]` | `None` | Path for rank-0 JSONL structured event logging |
+| `safe_serialization` | `bool` | `False` | Defaults `BaseModel.save()` to `.safetensors` safe bundles |
+| `callbacks` | `Optional[List[Any]]` | `None` | List of `Callback` instances or string shortcuts |
+| `train_step` | `Optional[Any]` | `None` | Callable `train_step(engine, batch) -> (loss, outputs, targets)` |

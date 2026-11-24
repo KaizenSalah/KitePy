@@ -1,0 +1,176 @@
+---
+title: 'BaseModel & compare()'
+description: 'Complete API reference for BaseModel inherited by every KitePy model class'
+icon: 'cube'
+---
+
+## Overview
+
+`BaseModel` (`kitepy/core/base.py`) is the shared base class inherited by `CNN`, `Transformer`, `Vision`, `LLM`, `TextClassifier`, `VLM`, `Audio`, `Tabular`, and `Generative`.
+
+```python
+from kitepy import BaseModel, compare
+```
+
+---
+
+## Class Attributes & Constructor
+
+```python
+BaseModel(
+    model: Optional[Union[str, nn.Module]] = None,
+    config: Optional[Union[Dict, BaseConfig, ExperimentConfig, str]] = None,
+    adapter: Optional[TaskAdapter] = None,
+    **kwargs,
+)
+```
+
+| Attribute | Type | Description |
+|---|---|---|
+| `modality` | `str` | Pillar identifier (`"vision"`, `"language"`, `"multimodal"`, `"audio"`, `"tabular"`, `"generative"`) |
+| `default_config_class` | `Type[BaseConfig]` | Pillar config dataclass (`CNNConfig`, `LLMConfig`, etc.) |
+| `default_task` | `str` | Default adapter task name |
+| `model_name` | `str` | Preset/HF ID string, or `"custom"` when passed an `nn.Module` |
+| `custom_model` | `Optional[nn.Module]` | Custom `nn.Module` if supplied |
+| `model` | `Optional[nn.Module]` | Built PyTorch model (`None` until first `.train()`/`.compile()`/`.profile()` or `_build_model()`) |
+| `config` | `BaseConfig` | Merged model configuration |
+| `data_config` | `DataConfig` | Merged data configuration |
+| `train_config` | `TrainingConfig` | Merged training configuration |
+| `device` | `Optional[torch.device]` | Active execution device |
+| `is_trained` | `bool` | `True` after successful `.train()` |
+| `training_history` | `List[Dict[str, Any]]` | Per-epoch metric history dicts accumulated across `.train()` calls |
+| `execution_report` | `Dict[str, Any]` | Latest run summary (`lineage`, `execution_plan`, `recovery`, `epochs_completed`, `global_step`, `best_val_loss`) |
+| `class_names` | `Optional[List[str]]` | Class label strings inferred from dataset or set by user |
+| `last_input_shape` | `Optional[Tuple[int, ...]]` | Input shape (excluding batch dim) cached by `.predict()` |
+
+---
+
+## Methods
+
+### `train()`
+
+```python
+model.train(
+    data: Optional[Any] = None,
+    epochs: Optional[int] = None,
+    **kwargs,
+) -> BaseModel
+```
+
+- `data`: Preset string, local path, `"synthetic"`, `"hf://..."`, `(train_loader, val_loader[, test_loader])`, `DataLoader`, `Dataset`, Python list, or `(X, y)` tuple depending on pillar.
+- `epochs`: Overrides `TrainingConfig.epochs`.
+- `**kwargs`: Routed via `split_kwargs()` to `DataConfig` and `TrainingConfig` (unknown keys raise `ValueError`).
+- Returns `self`.
+
+### `evaluate()`
+
+```python
+model.evaluate(data: Any, **kwargs) -> Dict[str, float]
+```
+
+Runs `Engine.evaluate()` on a `DataLoader` or resolved validation/test split and returns `{"test_loss": float, ...}` (`"test_accuracy"` included when `"acc"` is tracked).
+
+### `predict()`
+
+```python
+model.predict(
+    inputs: Any,
+    return_probs: bool = False,
+    top_k: Optional[int] = None,
+    **kwargs,
+) -> Any
+```
+
+- Default (`return_probs=False, top_k=None`): returns raw model outputs (`Tensor` logits, or `List[Dict[str, Tensor]]` for detectors).
+- `return_probs=True`: applies `softmax` (or `sigmoid` `[1-p, p]` for binary single-logit tasks; returns raw `Tensor` for regression; JSON-safe conversion for non-tensor outputs).
+- `top_k`: returns `[{"class_id", "label", "confidence"}, ...]` for classification/binary (`results[0]` unwrapped when batch size `1` and `inputs` is not a `list`), continuous float/list for regression, or top-`k` score-sorted detection dicts.
+
+### `save()` & `load()`
+
+```python
+model.save(path: Union[str, Path], save_config: bool = True, safe: Optional[bool] = None)
+```
+```python
+@classmethod
+ModelClass.load(
+    path: Union[str, Path],
+    device: Optional[str] = None,
+    custom_model: Optional[nn.Module] = None,
+    allow_unsafe: bool = False,
+) -> BaseModel
+```
+
+- `safe=True`, `.safetensors` suffix, or `train_config.safe_serialization=True` writes pickle-free `.safetensors` + `.meta.json`.
+- `.pt` files load strictly with `weights_only=True` unless `allow_unsafe=True`.
+- Reconstructs `task`, `config`, `data_config`, `train_config`, `class_names`, `last_input_shape`, `is_trained`, and `training_history`.
+
+### `freeze_backbone()` & `unfreeze()`
+
+```python
+model.freeze_backbone() -> BaseModel
+model.unfreeze(layers: Optional[int] = None, pattern: Optional[str] = None) -> BaseModel
+```
+
+- `freeze_backbone()`: freezes all non-head parameters detected by `get_head_parameter_names()`.
+- `unfreeze()`: unfreezes all weights (`None`), last `N` blocks (`layers=N`), or parameter names containing substring `pattern`.
+
+### `compile()` & `quantize()`
+
+```python
+model.compile(mode: str = "default") -> BaseModel
+model.quantize(bits: int = 8) -> BaseModel
+```
+
+### `export()`
+
+```python
+model.export(
+    path: Union[str, Path],
+    format: str = "auto",
+    input_shape: Optional[Tuple[int, ...]] = None,
+    verify: bool = False,
+) -> BaseModel
+```
+
+`format` supports `"auto"` (by suffix `.onnx` / `.safetensors` / default `"torchscript"`), `"onnx"`, `"torchscript"`, and `"safetensors"`.
+
+### `profile()`, `describe()`, `summary()`, `explain_config()`
+
+```python
+model.profile(input_size: Optional[Tuple[int, ...]] = None) -> Dict[str, Any]
+model.describe()
+model.summary()
+model.explain_config()
+```
+
+### `find_lr()` & `tune()`
+
+```python
+model.find_lr(data: Any = "synthetic", **kwargs) -> float
+model.tune(data: Any, trials: int = 20, **kwargs) -> Dict[str, Any]
+```
+
+### `to_fastapi()`, `push_to_hub()`, & `unwrap()`
+
+```python
+model.to_fastapi() -> FastAPI
+model.push_to_hub(repo_id: str, commit_message: str = "Upload KitePy model", private: bool = False, token: Optional[str] = None) -> str
+model.unwrap() -> nn.Module
+```
+
+---
+
+## `compare()`
+
+```python
+compare(
+    models: List[Union[str, BaseModel]],
+    data: Any,
+    epochs: int = 3,
+    cls: Optional[type] = None,
+    **kwargs,
+) -> List[Dict[str, Any]]
+```
+
+Trains and profiles each model sequentially (defaults to `cls=CNN` when `cls=None`) and prints a formatted summary table. Each returned dictionary contains:
+`model`, `params`, `size_mb`, `latency_ms`, `train_loss`, `val_loss`, `val_acc`, `train_time_s`, and `instance`.

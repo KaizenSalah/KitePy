@@ -1,0 +1,57 @@
+---
+title: 'LLM LoRA Fine-Tuning & Chat'
+description: 'Fine-tune Qwen2.5 / GPT2 with PEFT LoRA on JSONL chat data, stream huge files, and run greedy/sampled generation'
+icon: 'message-code'
+---
+
+## HuggingFace LoRA Chat Fine-Tuning (`Qwen/Qwen2.5-0.5B`)
+
+```python
+import json
+from pathlib import Path
+from kitepy import LLM
+
+data_path = Path("./chat_train.jsonl")
+records = [
+    {"messages": [{"role": "user", "content": "What is KitePy?"}, {"role": "assistant", "content": "KitePy is a modular PyTorch framework across 6 pillars."}]},
+    {"messages": [{"role": "user", "content": "How does auto_plan work?"}, {"role": "assistant", "content": "ExecutionPlanner solves micro_batch_size and gradient accumulation under your VRAM budget."}]},
+] * 8
+data_path.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
+
+llm = LLM(
+    "Qwen/Qwen2.5-0.5B",
+    pretrained=True,
+    lora=True,
+    lora_r=8,
+    lora_alpha=16,
+    context_length=256,
+)
+
+llm.train(
+    str(data_path),
+    epochs=3,
+    batch_size=8,
+    lr=2e-4,
+    auto_plan=True,
+    max_length=256,
+    save_every_n_epochs=0,
+)
+
+print(llm.generate("<|user|>\nWhat is KitePy?\n<|assistant|>\n", max_new_tokens=32, temperature=0.7))
+```
+
+---
+
+## Offline `TinyGPT` + `TextClassifier`
+
+```python
+from kitepy import LLM, TextClassifier
+
+tiny = LLM("tiny_gpt", context_length=64)
+tiny.train(["kitepy keeps training clean", "pytorch with zero boilerplate"], epochs=5, batch_size=2)
+print("Greedy decode:", tiny.generate("kitepy", max_new_tokens=16, temperature=0.0))
+
+clf = TextClassifier("tiny_gpt", num_classes=2, context_length=64)
+clf.train("synthetic", epochs=2, batch_size=4)
+print("Sequence logits:", clf.predict("kitepy makes things clean", return_probs=True))
+```

@@ -1,0 +1,76 @@
+---
+title: 'Generative Models'
+description: 'Train Variational Autoencoders (ConvVAE) and Diffusion Models (SimpleDDPM / diffusers) and sample images'
+icon: 'sparkles'
+---
+
+## Overview
+
+`Generative` trains image generation models via `GenerativeAdapter` and generates new image tensors with `.sample(n)`.
+
+```python
+from kitepy import Generative
+
+gen = Generative("vae_small").train("synthetic", epochs=5)
+images = gen.sample(n=4)
+```
+
+---
+
+## Simple vs. Advanced Usage
+
+<CodeGroup>
+```python ConvVAE (Reconstruction + KL Loss)
+from kitepy import Generative
+
+vae = Generative("vae_small", img_size=32, latent_dim=32, kl_weight=0.001)
+vae.train("cifar10", epochs=10, batch_size=64)
+
+samples = vae.sample(n=8)  # Tensor (8, 3, 32, 32) in [0, 1]
+```
+
+```python SimpleDDPM (Denoising Diffusion)
+from kitepy import Generative
+
+ddpm = Generative("ddpm_small", img_size=32, timesteps=100, base_channels=32)
+ddpm.train("synthetic", epochs=5, batch_size=16)
+
+samples = ddpm.sample(n=4)  # Iterative reverse diffusion -> (4, 3, 32, 32)
+```
+
+```python Full GenerativeConfig + Local Folder
+from kitepy import Generative, GenerativeConfig
+
+cfg = GenerativeConfig(
+    arch="vae",
+    in_channels=3,
+    img_size=64,
+    latent_dim=64,
+    base_channels=64,
+    kl_weight=0.001,
+)
+gen = Generative("vae_base", config=cfg).train("./unlabeled_or_labeled_imgs", epochs=20)
+```
+</CodeGroup>
+
+---
+
+## Built-In Presets (`GENERATIVE_PRESETS`) & `diffusers`
+
+| Preset / Model ID | Underlying Class | Defaults |
+|---|---|---|
+| `"vae_small"` | `ConvVAE` | `arch="vae"`, `latent_dim=32`, `base_channels=32`, `img_size=32` |
+| `"vae_base"` | `ConvVAE` | `arch="vae"`, `latent_dim=64`, `base_channels=64`, `img_size=64` |
+| `"ddpm_small"` | `SimpleDDPM` | `arch="ddpm"`, `base_channels=32`, `img_size=32`, `timesteps=100` |
+| `"diffusers_unet"` | `diffusers.UNet2DModel` | Requires `pip install diffusers`; constructs UNet with `sample_size=img_size` |
+
+---
+
+## Data & Loss Behavior
+
+- **Datasets**: Passing `"synthetic"` uses `SyntheticGenerativeDataset` `(image, image)`. Passing any vision dataset (`"cifar10"`, `"mnist"`, folder path) delegates cleanly to `load_vision_data_with_meta()`.
+- **Loss Routing (`GenerativeAdapter`)**:
+  - If the model defines `.compute_loss(x)` (like `SimpleDDPM`), calls `model.compute_loss(x)`.
+  - If forward returns a 3-tuple `(recon, mu, logvar)` (like `ConvVAE`), computes `MSE(recon, x) + kl_weight * KLD`.
+  - Otherwise computes `F.mse_loss(out, x)`.
+- **Metrics**: Tracks `train_recon_loss` and `val_recon_loss`.

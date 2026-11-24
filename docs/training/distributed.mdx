@@ -1,259 +1,63 @@
 ---
-title: 'Distributed Training'
-description: 'Train on multiple GPUs and nodes'
+title: 'Mixed Precision, Compile & Accelerate'
+description: 'AMP precision selection (bf16/fp16/fp32), torch.compile, device routing, and HuggingFace Accelerate'
 icon: 'server'
 ---
 
-## Overview
+## Mixed Precision (`mixed_precision` & `amp_dtype`)
 
-kitepy automatically detects the best available device (CPU or GPU) and uses it efficiently out of the box. 
+`Engine._configure_precision()` selects AMP precision safely across hardware:
 
-<Note>
-Full distributed training support across multiple GPUs and nodes (DDP, FSDP, DeepSpeed) is currently in development and will be released in an upcoming phase.
-</Note>
+| Setting | CUDA Behavior | CPU Behavior |
+|---|---|---|
+| `mixed_precision=True`, `amp_dtype="auto"` (default) | Uses `torch.bfloat16` (no `GradScaler`) if `torch.cuda.is_bf16_supported()`, else `torch.float16` + `torch.amp.GradScaler("cuda")` | Disabled (`False`) |
+| `mixed_precision="bf16"` (or `amp_dtype="bf16"`) | `torch.bfloat16` autocast | CPU `bfloat16` autocast |
+| `mixed_precision="fp16"` (or `amp_dtype="fp16"`) | `torch.float16` autocast + `GradScaler` | Disabled (`False`) |
+| `mixed_precision=False` / `"fp32"` / `"no"` / `None` | Full float32 precision | Full float32 precision |
 
-## Automatic Device Selection
+Under FP16 `GradScaler`, `Engine._optimizer_step()` unscales before gradient norm clipping and checks scale decrease to accurately avoid stepping `self.scheduler` or `self.ema` when `GradScaler` skips an overflowed step.
 
-kitepy automatically selects the best available device:
+---
 
-```python
-from kitepy import CNN
+## `torch.compile` Support
 
-# Automatically uses GPU if available
-model = CNN("resnet18")
-model.train("cifar10")
-```
-
-Check what device is being used:
+Enable PyTorch 2.x graph compilation with `compile=True`:
 
 ```python
-from kitepy import print_device_info
-
-print_device_info()
-# Output:
-# ========================================
-# 🖥️  Device Information
-# ========================================
-#   Available:  cuda:0 (NVIDIA RTX 4090)
-#   Memory:     24.0 GB
-```
-
-## Specifying Devices
-
-### Single GPU
-
-```python
-# Use specific GPU
-model.train("cifar10", devices=0)  # GPU 0
-
-model.train("cifar10", devices=1)  # GPU 1
-```
-
-### Multiple GPUs
-
-```python
-# Coming in Phase 2
-model.train("cifar10", devices=4)  # Use 4 GPUs
-```
-
-### CPU Only
-
-```python
-model.train("cifar10", devices="cpu")
-```
-
-## Current Capabilities
-
-### Mixed Precision Training
-
-Uses NVIDIA Tensor Cores for faster training:
-
-```python
-model.train("cifar10", mixed_precision=True)  # Default on GPU
-```
-
-### Automatic Memory Optimization
-
-kitepy automatically handles:
-
-- Moving model to GPU
-- Moving data to GPU
-- Mixed precision scaling
-- Gradient scaling
-
-### Memory-Efficient Training
-
-For large models, use these techniques:
-
-```python
-model.train("imagenet",
-    # Reduce batch size
-    batch_size=32,
-    
-    # Accumulate gradients
-    gradient_accumulation_steps=8,
-    
-    # Enable gradient checkpointing
-    gradient_checkpointing=True,
-    
-    # Use mixed precision
-    mixed_precision=True,
+model = CNN("resnet18").train(
+    "cifar10",
+    epochs=5,
+    compile=True,
+    compile_mode="default",  # passed to torch.compile(..., mode=compile_mode)
 )
 ```
 
-## Coming in Phase 2
+KitePy stores an uncompiled/base reference safely, skips compilation cleanly with a warning if unavailable on the runtime, and remains reusable across consecutive `.train()` calls (even with `ema=True`).
 
-### DataParallel (DP)
+---
 
-Simple multi-GPU on single machine:
+## Multi-GPU With HuggingFace Accelerate (`use_accelerate=True`)
 
-```python
-# Coming soon
-model.train("imagenet",
-    strategy="dp",
-    devices=4,
-)
-```
-
-### DistributedDataParallel (DDP)
-
-Efficient multi-GPU with process-per-GPU:
+When `use_accelerate=True` is set in `TrainingConfig` and `accelerate` is installed:
+- `Engine` creates an `accelerate.Accelerator` (with `gradient_accumulation_steps` and `mixed_precision`).
+- Prepares `self.model`, `self.optimizer`, `train_loader`, `val_loader`, and `self.scheduler`.
+- Uses `accelerator.backward()` and `accelerator.sync_gradients` for accumulation boundaries.
+- Reduces training and validation loss, `batches_run`, and every metric counter across ranks via `_reduce_distributed_metrics()` (`accelerator.reduce(..., reduction="sum")`).
+- Unwraps the model (`accelerator.unwrap_model()`) at the end of `Engine.train()` and restricts checkpoints/logging to rank 0.
 
 ```python
-# Coming soon
-model.train("imagenet",
-    strategy="ddp",
-    devices=4,
-)
+from kitepy import Engine, TrainingConfig
+
+cfg = TrainingConfig(epochs=5, use_accelerate=True, batch_size=32, gradient_accumulation_steps=2)
+trained_model, history = Engine(pytorch_net, cfg, modality="vision").train(train_loader, val_loader)
 ```
 
-### Fully Sharded Data Parallel (FSDP)
-
-Train models larger than GPU memory:
-
-```python
-# Coming soon
-model.train("imagenet",
-    strategy="fsdp",
-    devices=8,
-)
-```
-
-### DeepSpeed
-
-ZeRO optimization for huge models:
-
-```python
-# Coming soon
-model.train("imagenet",
-    strategy="deepspeed",
-    devices=8,
-    deepspeed_config="ds_config.json",
-)
-```
-
-### Multi-Node Training
-
-Train across multiple machines:
-
-```python
-# Coming soon
-model.train("imagenet",
-    num_nodes=4,
-    devices=8,  # GPUs per node
-)
-```
-
-## Performance Tips
-
-### Use Mixed Precision
-
-Always enable when training on modern GPUs:
-
-```python
-model.train("cifar10", mixed_precision=True)
-```
-
-### Optimize Data Loading
-
-```python
-model.train("imagenet",
-    num_workers=8,      # Match CPU cores
-    pin_memory=True,    # Faster CPU→GPU transfer
-    prefetch_factor=2,  # Prefetch batches
-)
-```
-
-### Batch Size Tuning
-
-Find the optimal batch size for your GPU:
-
-```python
-# Start large, reduce if OOM
-for batch_size in [256, 128, 64, 32]:
-    try:
-        model.train("cifar10", batch_size=batch_size, fast_dev_run=True)
-        print(f"Batch size {batch_size} works!")
-        break
-    except RuntimeError as e:
-        if "out of memory" in str(e):
-            print(f"Batch size {batch_size} OOM, trying smaller...")
-        else:
-            raise
-```
-
-### Monitor GPU Usage
+Launch multi-GPU scripts with Accelerate:
 
 ```bash
-# In another terminal
-watch -n 1 nvidia-smi
+accelerate launch --multi_gpu train.py
 ```
 
-## Troubleshooting
-
-<AccordionGroup>
-  <Accordion title="CUDA out of memory">
-    Try these in order:
-    1. Reduce batch size
-    2. Enable gradient checkpointing
-    3. Use gradient accumulation
-    4. Use mixed precision
-    
-    ```python
-    model.train("imagenet",
-        batch_size=16,
-        gradient_accumulation_steps=16,
-        gradient_checkpointing=True,
-        mixed_precision=True,
-    )
-    ```
-  </Accordion>
-
-  <Accordion title="Training is slow">
-    Check:
-    1. Are you using GPU? Check `print_device_info()`
-    2. Is mixed precision enabled?
-    3. Are there enough data workers?
-    4. Is the GPU being fully utilized?
-    
-    ```python
-    model.train("imagenet",
-        mixed_precision=True,
-        num_workers=8,
-        pin_memory=True,
-    )
-    ```
-  </Accordion>
-
-  <Accordion title="Data loading bottleneck">
-    Increase data workers:
-    ```python
-    model.train("imagenet", num_workers=16)
-    ```
-    
-    If on Windows, you might need:
-    ```python
-    model.train("imagenet", num_workers=0)
-    ```
-  </Accordion>
-</AccordionGroup>
+<Note>
+`TrainingConfig.strategy` (`"auto"`, `"ddp"`, `"fsdp"`, `"deepspeed"`) and `num_nodes` are validated configuration fields stored on `TrainingConfig`. Distributed execution in `Engine` is driven via `use_accelerate=True` and Accelerate launcher configuration.
+</Note>

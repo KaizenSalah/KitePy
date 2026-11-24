@@ -1,0 +1,77 @@
+---
+title: 'Audio Models'
+description: 'Audio and speech classification from .wav folders, manifests, spectrograms, or raw waveforms'
+icon: 'waveform-lines'
+---
+
+## Overview
+
+`Audio` supports built-in spectrogram CNNs (`AudioCNN`), spectrogram patch transformers (`AudioTransformer`), and pretrained HuggingFace audio models (`AutoModelForAudioClassification`) with automatic log-STFT extraction from waveforms.
+
+```python
+from kitepy import Audio
+
+model = Audio("audio_cnn").train("./audio_dataset", epochs=10)
+```
+
+---
+
+## Simple vs. Advanced Usage
+
+<CodeGroup>
+```python Real .wav Folder (Auto-Detects Classes)
+from kitepy import Audio
+
+# Folder layout: audio_root/{class_a,class_b}/*.wav (or train/ and val/)
+model = Audio("audio_transformer")
+model.train("./audio_root", epochs=10, batch_size=8, lr=2e-3)
+
+# Predict directly from a raw 1D waveform tensor or NumPy array
+import torch
+logits = model.predict(torch.randn(16000))
+```
+
+```python Audio Manifest (.csv / .jsonl)
+from kitepy import Audio
+
+# CSV columns: audio,label  (JSONL objects: {"audio": "clip.wav", "label": "beep"})
+model = Audio("audio_cnn", hidden_dim=128)
+model.train("audio_manifest.csv", epochs=15, batch_size=16)
+```
+
+```python Custom AudioConfig & Pretrained HF Audio
+from kitepy import Audio, AudioConfig
+
+cfg = AudioConfig(
+    arch="audio_cnn",
+    num_classes=5,
+    in_channels=1,
+    sample_rate=16000,
+    n_mels=64,
+    num_frames=128,
+    hidden_dim=128,
+)
+model = Audio("audio_cnn", config=cfg).train("synthetic", epochs=3)
+
+# HuggingFace pretrained audio model
+hf_au = Audio("facebook/wav2vec2-base", pretrained=True, num_classes=4)
+```
+</CodeGroup>
+
+---
+
+## Built-In Presets (`AUDIO_PRESETS`)
+
+| Preset | Architecture | Default `hidden_dim` | Details |
+|---|---|---|---|
+| `"audio_cnn"` | `AudioCNN` | `128` | 2-block Conv2d + BatchNorm2d + GELU + AdaptiveAvgPool2d classifier over `(B, 1, F, T)` spectrograms |
+| `"audio_transformer"` | `AudioTransformer` | `192` | `InstanceNorm2d` + 8x8 patch Conv2d + interpolated separable 2D freq/time pos embeddings + 2-layer TransformerEncoder |
+
+---
+
+## Waveform & Format Handling
+
+- **Zero-dependency `.wav` loading**: `_load_wav_waveform()` reads 8-bit, 16-bit, and 32-bit `.wav` files via Python's built-in `wave` module (averaging stereo/multi-channel audio to mono and normalizing to `target_samples=16000`).
+- **Other formats**: `.flac`, `.ogg`, and `.mp3` load via `torchaudio` when installed.
+- **Short & empty waveform safety**: Waveforms shorter than `n_fft=256` (e.g., 10 or 64 samples) are automatically zero-padded before `torch.stft` and resized to `(64, 128)` so both `AudioCNN` and `AudioTransformer` run inference cleanly. Empty 0-sample waveforms raise an explicit `ValueError`.
+- **Training vs. Inference shapes**: `Audio._preprocess_input()` accepts 1D waveforms `(N,)`, batched 2D waveforms `(B, N)`, 3D spectrograms `(1, F, T)`, or 4D spectrogram batches `(B, 1, F, T)`.

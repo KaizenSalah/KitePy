@@ -1,201 +1,152 @@
 ---
 title: 'Quickstart'
-description: 'Train your first model in under 5 minutes'
+description: 'Train and serve models across all six pillars in minutes'
 icon: 'bolt'
 ---
 
 ## Prerequisites
 
-Before you begin, make sure you have:
-- Python 3.8 or higher
-- PyTorch 2.0 or higher
-- (Optional) CUDA-compatible GPU for faster training
+- Python `>= 3.8`
+- PyTorch `>= 2.0.0`
+- Optional GPU with CUDA or Apple Silicon MPS (`devices="auto"` selects automatically)
 
-## Installation
+## Install
 
-Install kitepy with pip:
-
-<CodeGroup>
-```bash pip
+```bash
 pip install kitepy
 ```
 
-```bash with GPU support
-pip install kitepy torch torchvision --extra-index-url https://download.pytorch.org/whl/cu118
+For HuggingFace LLMs, datasets, FastAPI serving, and SafeTensors bundles, add the optional extras or packages you need:
+
+```bash
+pip install "kitepy[all]" safetensors fastapi uvicorn peft
 ```
 
-```bash development install
-git clone https://github.com/ExtraKaizen/kitepy
-cd kitepy
-pip install -e .
+---
+
+## 1. One-Line Vision Training
+
+Train ResNet-18 on CIFAR-10 in two lines:
+
+```python
+from kitepy import CNN
+
+model = CNN("resnet18").train("cifar10", epochs=5)
+```
+
+Using your own folder of class subdirectories (`my_data/dog/*.jpg`, `my_data/cat/*.jpg`) auto-detects `num_classes` and `class_names` and splits train/validation cleanly without leaking training augmentations into validation:
+
+```python
+model = CNN("resnet18", pretrained=True).train("./my_data", epochs=10, batch_size=64)
+preds = model.predict("test_dog.jpg", top_k=3)
+print(preds)
+# [{'class_id': 1, 'label': 'dog', 'confidence': 0.94}, ...]
+```
+
+---
+
+## 2. All Six Pillars at a Glance
+
+Every pillar uses `.train()`, `.evaluate()`, `.predict()`, `.save()`, and `.load()`:
+
+<CodeGroup>
+```python Vision Tasks
+from kitepy import Vision
+
+# Tasks: "classification", "binary", "multilabel", "regression", "segmentation", "detection"
+seg = Vision(task="segmentation", model="unet", num_classes=3)
+seg.train("synthetic", epochs=2, img_size=64)
+
+det = Vision(task="detection", model="tiny_detector", num_classes=4)
+det.train("synthetic", epochs=2, img_size=64)
+```
+
+```python LLM & TextClassifier
+from kitepy import LLM, TextClassifier
+
+# Offline char-level GPT
+llm = LLM("tiny_gpt", context_length=128)
+llm.train(["kitepy simplifies pytorch training", "deep learning across modalities"], epochs=5)
+print(llm.generate("kitepy", max_new_tokens=20, temperature=0.7))
+
+# Pretrained HuggingFace LLM + LoRA on ChatML/JSONL
+# hf_llm = LLM("Qwen/Qwen2.5-0.5B", pretrained=True, lora=True).train("chat.jsonl", epochs=3)
+
+clf = TextClassifier("tiny_gpt", num_classes=2)
+clf.train("synthetic", epochs=2)
+```
+
+```python Tabular
+from kitepy import Tabular
+
+# CSV expects target in the last column; NaNs and categorical features are handled automatically
+reg = Tabular("tabular_resnet", task="regression").train("housing.csv", epochs=15)
+clf = Tabular("tabular_mlp", task="classification").train("iris.csv", epochs=15)
+```
+
+```python Audio & Multimodal & Generative
+from kitepy import Audio, VLM, Generative
+
+au = Audio("audio_cnn").train("synthetic", epochs=2)  # or "./audio_folder" of .wav files
+probs = VLM("clip_tiny").train("synthetic", epochs=2).predict("synthetic_or_image.png", texts=["cat", "dog"])
+
+gen = Generative("vae_small", img_size=32).train("synthetic", epochs=2)
+samples = gen.sample(n=4)  # Tensor of shape (4, 3, 32, 32)
 ```
 </CodeGroup>
 
-## Your First Model
+<Tip>
+You can pass `data="synthetic"` to any pillar to run an instant zero-download end-to-end smoke check.
+</Tip>
 
-Let's train a CNN on CIFAR-10. Create a file called `train.py`:
+---
 
-```python train.py
-from kitepy import CNN
+## 3. Scaling Up: Config Files & Power-User Controls
 
-# One line is all you need!
-CNN("resnet18").train("cifar10")
-```
-
-Run it:
-
-```bash
-python train.py
-```
-
-You'll see output like this:
-
-```
-✓ Created CNN model: resnet18
-  - Architecture: resnet
-  - Parameters: 11,689,512
-
-========================================
-🚀 Training Configuration
-========================================
-  Epochs:     10
-  Batch Size: 32
-  Device:     cuda:0
-  Mixed Precision: True
-
-Epoch 1/10: 100%|████████████| 1563/1563 [00:45<00:00, 34.12it/s]
-  → Train Loss: 1.4523  |  Val Loss: 1.1234  |  Val Acc: 62.45%
-
-Epoch 2/10: 100%|████████████| 1563/1563 [00:44<00:00, 35.01it/s]
-  → Train Loss: 1.0234  |  Val Loss: 0.9456  |  Val Acc: 68.32%
-
-...
-
-✓ Training complete! Best metric: 0.5123
-```
-
-<Check>Congratulations! You've trained your first model with kitepy!</Check>
-
-## Customizing Training
-
-Want more control? Override any parameter:
+When you move beyond prototypes, combine typed configs, YAML files, `auto_plan=True`, callbacks, and custom steps:
 
 ```python
-from kitepy import CNN
+from kitepy import CNN, EarlyStopping, ModelCheckpoint, CSVLogger
 
-model = CNN("resnet50", num_classes=10, pretrained=True)
+model = CNN("vit_tiny", pretrained=True, num_classes=10)
+model.freeze_backbone()
 
 model.train(
     data="cifar10",
-    epochs=50,
-    batch_size=128,
-    lr=0.001,
-    optimizer="adamw",
-    scheduler="cosine",
+    epochs=10,
+    lr={"backbone": 1e-4, "head": 1e-3},
+    ema=True,
+    mixup_alpha=0.2,
+    auto_plan=True,
+    memory_budget_mb=4096,
+    safe_serialization=True,
+    callbacks=[
+        EarlyStopping(monitor="val_loss", patience=3),
+        ModelCheckpoint(filepath="ckpts/ep_{epoch:02d}_{val_loss:.4f}.pt", save_top_k=2),
+        CSVLogger(log_dir="./logs"),
+    ],
 )
 ```
 
-## Save and Load Models
+---
 
-Save your trained model:
+## 4. Save Safely & Serve Over FastAPI
 
 ```python
-# After training
-model.save("my_model.pt")
+# Recommended: pickle-free .safetensors + .meta.json + .yaml
+model.save("artifacts/model.safetensors", safe=True)
 
-# Load it later
 from kitepy import CNN
-loaded = CNN.load("my_model.pt")
+reloaded = CNN.load("artifacts/model.safetensors")
 
-# Use for inference
-predictions = loaded.predict(images)
+# Instant FastAPI app with GET /health and POST /predict
+app = reloaded.to_fastapi()
 ```
 
-## Try Different Architectures
+Or run the CLI directly from your terminal:
 
-kitepy supports 800+ model architectures:
-
-```python
-from kitepy import CNN, Transformer
-
-# Different CNN architectures
-CNN("resnet18").train("cifar10")
-CNN("resnet50").train("cifar10")
-CNN("efficientnet_b0").train("cifar10")
-CNN("mobilenet_v3_large").train("cifar10")
-
-# Vision Transformers
-Transformer("vit_tiny").train("cifar10")
-Transformer("swin_small").train("cifar10")
+```bash
+kitepy doctor
+kitepy models all
+kitepy predict artifacts/model.safetensors sample.png --modality vision --top-k 3
 ```
-
-<Tip>
-Use `list_models("cnn")` to see all available CNN architectures, or `list_models("transformer")` for Vision Transformers.
-</Tip>
-
-## Use Your Own Data
-
-Point kitepy to your dataset folder:
-
-```python
-# ImageFolder structure:
-# my_dataset/
-#   train/
-#     class1/
-#       img1.jpg
-#       img2.jpg
-#     class2/
-#       ...
-#   val/
-#     class1/
-#       ...
-
-model = CNN("resnet18")
-model.train("/path/to/my_dataset")
-```
-
-Or use a PyTorch DataLoader directly:
-
-```python
-from torch.utils.data import DataLoader
-
-my_loader = DataLoader(my_dataset, batch_size=32, shuffle=True)
-model = CNN("resnet18")
-model.train(my_loader)
-```
-
-## Transfer Learning
-
-Use pretrained weights and fine-tune:
-
-```python
-from kitepy import CNN
-
-# Load pretrained model
-model = CNN("resnet50", pretrained=True, num_classes=10)
-
-# Freeze backbone, train only classifier
-model.freeze_backbone()
-model.train("my_dataset", epochs=10)
-
-# Unfreeze for fine-tuning
-model.unfreeze()
-model.train("my_dataset", epochs=20, lr=0.0001)
-```
-
-## What's Next?
-
-<CardGroup cols={2}>
-  <Card title="Vision Models" icon="eye" href="/vision/cnn">
-    Deep dive into CNNs and Vision Transformers
-  </Card>
-  <Card title="Configuration" icon="sliders" href="/concepts/configuration">
-    Master the configuration system
-  </Card>
-  <Card title="Training Features" icon="graduation-cap" href="/training/basics">
-    Learn about advanced training options
-  </Card>
-  <Card title="Examples" icon="code" href="/examples/quickstart-cnn">
-    Browse complete example scripts
-  </Card>
-</CardGroup>

@@ -1,252 +1,78 @@
 ---
-title: 'Model Profiling'
-description: 'Measure and optimize model performance'
-icon: 'gauge-high'
+title: 'Profiling & Model Comparison'
+description: 'Inspect parameter counts, size, latency, throughput, GPU memory, and benchmark architectures side-by-side'
+icon: 'chart-line'
 ---
 
-## Overview
-
-kitepy provides built-in profiling tools to understand your model's performance characteristics: parameter count, memory usage, latency, and throughput.
-
-## Quick Profile
-
-Get a performance summary with one call:
+## Model Inspection (`describe()`, `summary()`, `explain_config()`)
 
 ```python
 from kitepy import CNN
 
-model = CNN("resnet50", num_classes=10)
-profile = model.profile()
+model = CNN("resnet18", num_classes=10)
+model._build_model()
 
-print(f"Parameters: {profile['total_params']:,}")
-print(f"Model size: {profile['model_size_mb']:.1f} MB")
-print(f"Latency: {profile['latency_ms']:.1f} ms")
-print(f"Throughput: {profile['throughput']:.1f} samples/sec")
+model.summary()          # Parameter count (total, trainable, non-trainable), MB size, architecture print
+model.describe()         # Metadata + config JSON + architecture summary
+model.explain_config()   # Full JSON schema of every overridable option on this pillar's config class
 ```
 
-Output:
-```
-Parameters: 25,557,032
-Model size: 97.5 MB
-Latency: 12.3 ms
-Throughput: 81.3 samples/sec
+---
+
+## Latency & Throughput Profiling (`profile()`)
+
+```python
+stats = model.profile(input_size=(1, 3, 224, 224))
+print(stats)
 ```
 
-## Profile Details
-
-The `profile()` method returns a dictionary:
+Runs 3 warmup passes + 10 timed forward passes with `torch.no_grad()` on `self.device` (defaults to `(1, input_dim)` on `Tabular` or `(1, in_channels, img_size, img_size)` otherwise if `input_size=None`). Returns:
 
 ```python
 {
-    'total_params': 25557032,
-    'trainable_params': 25557032,
-    'non_trainable_params': 0,
-    'model_size_mb': 97.5,
-    'latency_ms': 12.3,
-    'throughput': 81.3,
-    'device': 'cuda:0',
+    "total_params": 11181642,
+    "trainable_params": 11181642,
+    "model_size_mb": 42.69,
+    "latency_ms": 2.66,
+    "throughput": 375.6,  # samples/sec
 }
 ```
 
-## Comparing Models
+---
 
-Compare different architectures:
+## Side-by-Side Model Benchmarking (`compare()`)
 
-```python
-from kitepy import CNN, Transformer
-
-models = ["resnet18", "resnet50", "efficientnet_b0", "vit_tiny", "vit_base"]
-
-print(f"{'Model':<20} {'Params':>12} {'Size (MB)':>10} {'Latency':>10}")
-print("-" * 55)
-
-for name in models:
-    if name.startswith("vit"):
-        model = Transformer(name, num_classes=10)
-    else:
-        model = CNN(name, num_classes=10)
-    
-    profile = model.profile()
-    print(f"{name:<20} {profile['total_params']:>12,} {profile['model_size_mb']:>10.1f} {profile['latency_ms']:>10.1f}ms")
-```
-
-Output:
-```
-Model                     Params  Size (MB)    Latency
--------------------------------------------------------
-resnet18             11,689,512       44.6       5.2ms
-resnet50             25,557,032       97.5      12.3ms
-efficientnet_b0       5,288,548       20.2       8.1ms
-vit_tiny              5,717,512       21.8       4.1ms
-vit_base             86,567,656      330.2      23.5ms
-```
-
-## Model Description
-
-Get a detailed model summary:
+`compare()` trains, profiles, and prints a comparison table across multiple model names or instantiated `BaseModel` objects on the same dataset:
 
 ```python
-model = CNN("resnet50", num_classes=10)
-model.describe()
+from kitepy import compare, Tabular
+
+# Compare CNN presets
+results = compare(
+    ["resnet18", "mobilenet_v3_small", "convnext_tiny"],
+    data="cifar10",
+    epochs=2,
+    batch_size=128,
+)
+
+# Compare across another pillar class via cls=
+tab_results = compare(
+    ["tabular_mlp", "tabular_resnet"],
+    data="synthetic",
+    epochs=3,
+    cls=Tabular,
+)
 ```
 
-Output:
-```
-======================================================================
-Model: CNN
-Name: resnet50
-Modality: vision
-Trained: False
-======================================================================
+Each returned dict contains `"model"`, `"params"`, `"size_mb"`, `"latency_ms"`, `"train_loss"`, `"val_loss"`, `"val_acc"`, `"train_time_s"`, and `"instance"` (the trained model).
 
-📋 Configuration:
-{
-  "arch": "resnet",
-  "depth": 50,
-  "num_classes": 10,
-  "pretrained": false,
-  ...
-}
+---
 
-🏗️  Architecture:
-  Total parameters: 25,557,032
-  Trainable parameters: 25,557,032
-  Non-trainable parameters: 0
-
-📊 Layer Statistics:
-  - Conv2d: 53 layers
-  - BatchNorm2d: 53 layers
-  - ReLU: 49 layers
-  - Linear: 1 layer
-```
-
-## FLOPs Analysis (Coming Soon)
-
-Measure computational complexity:
+## Memory Utilities
 
 ```python
-# Coming in Phase 2
-model.profile(flops=True)
-# {'flops': 4.1e9, 'macs': 2.05e9, ...}
+from kitepy.core.utils import get_memory_usage, clear_gpu_memory
+
+print(get_memory_usage())  # {'cpu_memory_mb': 0, 'gpu_memory_mb': ..., 'gpu_memory_reserved_mb': ...}
+clear_gpu_memory()         # Calls torch.cuda.empty_cache() if CUDA is available
 ```
-
-## Memory Profiling
-
-Estimate memory requirements:
-
-```python
-profile = model.profile()
-
-# Model weights
-print(f"Model memory: {profile['model_size_mb']:.1f} MB")
-
-# Full training memory estimate (including gradients, optimizer states)
-# Coming in Phase 2
-# print(f"Training memory (est.): {profile['training_memory_mb']:.1f} MB")
-```
-
-## Latency Benchmarking
-
-### Single Image Latency
-
-```python
-profile = model.profile(batch_size=1)
-print(f"Single image latency: {profile['latency_ms']:.2f} ms")
-```
-
-### Batch Latency
-
-```python
-profile = model.profile(batch_size=32)
-print(f"Batch latency: {profile['latency_ms']:.2f} ms")
-print(f"Per-image: {profile['latency_ms'] / 32:.2f} ms")
-```
-
-### Warmup
-
-Run warmup iterations before measuring:
-
-```python
-profile = model.profile(warmup_runs=10, timed_runs=100)
-```
-
-## Export for Production Analysis
-
-Export model for external profiling tools:
-
-```python
-# Export to ONNX for netron visualization
-model.export("model.onnx", format="onnx")
-
-# Then open with netron
-# netron model.onnx
-```
-
-## Optimization Recommendations
-
-After profiling, try these optimizations:
-
-### Reduce Model Size
-
-```python
-# Use a smaller architecture
-CNN("resnet18")  # Instead of resnet50
-
-# Or EfficientNet for better accuracy/size tradeoff
-CNN("efficientnet_b0")
-```
-
-### Improve Latency
-
-```python
-# Use quantization
-model.quantize(bits=8)
-
-# Use mixed precision inference
-model.half()  # FP16
-```
-
-### Improve Throughput
-
-```python
-# Use larger batch sizes
-profile = model.profile(batch_size=64)
-
-# Enable cudnn.benchmark
-import torch
-torch.backends.cudnn.benchmark = True
-```
-
-## Layer-by-Layer Analysis (Coming Soon)
-
-Get detailed per-layer statistics:
-
-```python
-# Coming in Phase 2
-layers = model.profile_layers()
-for layer in layers:
-    print(f"{layer['name']}: {layer['params']:,} params, {layer['flops']:,} FLOPs")
-```
-
-## Profiling During Training
-
-Track metrics during training:
-
-```python
-from kitepy.core.callbacks import ProfilerCallback
-
-profiler = ProfilerCallback(log_every_n_steps=100)
-model.train("cifar10", callbacks=[profiler])
-
-# Get stats
-print(profiler.get_stats())
-```
-
-## When to Profile
-
-Profile your models:
-
-- **Before training**: Choose appropriate architecture
-- **After training**: Before deployment
-- **During optimization**: Compare quantized/pruned versions
-- **For deployment**: Ensure latency requirements are met

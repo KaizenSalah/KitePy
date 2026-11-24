@@ -1,112 +1,65 @@
 ---
-title: 'Presets'
-description: 'API reference for model and dataset presets'
-icon: 'list'
+title: 'Presets Registry'
+description: 'API reference for built-in model presets, dataset presets, list_models, list_datasets, and register_preset'
+icon: 'list-check'
 ---
 
-## Overview
-
-kitepy provides preset configurations for models and datasets.
-
 ```python
-from kitepy import list_models, list_datasets, get_preset
+from kitepy import (
+    CNN_PRESETS,
+    MODEL_PRESETS,
+    DATASET_PRESETS,
+    list_models,
+    list_datasets,
+    register_preset,
+)
+from kitepy.core.presets import (
+    TRANSFORMER_PRESETS,
+    LLM_PRESETS,
+    VLM_PRESETS,
+    AUDIO_PRESETS,
+    TABULAR_PRESETS,
+    GENERATIVE_PRESETS,
+    RNN_PRESETS,
+    get_preset,
+)
 ```
 
-## list_models()
+---
 
-List available model presets.
+## Registry Functions
 
-```python
-list_models(modality: str = "all") -> Union[List[str], Dict[str, List[str]]]
-```
-
-### Examples
-
-```python
-# All model types
-all_models = list_models("all")
-
-# CNN models only
-cnn_models = list_models("cnn")
-# ['resnet18', 'resnet34', 'resnet50', ...]
-
-# Transformer models
-transformer_models = list_models("transformer")
-# ['vit_tiny', 'vit_small', 'vit_base', ...]
-```
-
-## list_datasets()
-
-List available dataset presets.
+- **`list_models(modality: str = "all")`** — Returns a dict of lists when `modality="all"`, or list of keys for `"vision"`, `"cnn"`, `"transformer"`, `"llm"`, `"language"`, `"vlm"`, `"multimodal"`, `"audio"`, `"tabular"`, `"generative"`, `"rnn"`.
+- **`list_datasets(modality: str = "all")`** — Filters `DATASET_PRESETS` by `"all"`, `"vision"`, `"language"` / `"text"`, `"multimodal"`.
+- **`get_preset(name: str, modality: Optional[str] = None) -> Dict[str, Any]`**
+- **`register_preset(name: str, config: Dict[str, Any], modality: str, overwrite: bool = False)`**
 
 ```python
-list_datasets(modality: str = "all") -> List[str]
-```
-
-### Examples
-
-```python
-datasets = list_datasets()
-# ['cifar10', 'cifar100', 'mnist', 'imagenet', ...]
-```
-
-## get_preset()
-
-Get a preset configuration.
-
-```python
-get_preset(name: str, modality: Optional[str] = None) -> Dict[str, Any]
-```
-
-### Examples
-
-```python
-preset = get_preset("resnet50")
-# {'arch': 'resnet', 'depth': 50, 'num_classes': 1000}
-```
-
-## register_preset()
-
-Register a custom preset.
-
-```python
-from kitepy import register_preset
+from kitepy import CNN, register_preset
 
 register_preset(
-    "my_resnet",
-    {"arch": "resnet", "depth": 50, "width_multiplier": 2.0},
-    modality="cnn"
+    name="resnet101_wide",
+    config={"arch": "resnet", "depth": 101, "width_multiplier": 2.0},
+    modality="cnn",
 )
-
-# Now use it
-model = CNN("my_resnet")
+model = CNN("resnet101_wide", num_classes=100)
 ```
 
-## Available Presets
+---
 
-### CNNs
+## Built-In Model Presets
 
-| Preset | Description |
-|--------|-------------|
-| `resnet18/34/50/101/152` | ResNet family |
-| `efficientnet_b0-b7` | EfficientNet |
-| `mobilenet_v2/v3` | MobileNet |
-| `vgg11/13/16/19` | VGG |
-| `densenet121/169/201` | DenseNet |
+- **`CNN_PRESETS`**: `resnet18`, `resnet34`, `resnet50`, `resnet101`, `resnet152`, `wide_resnet50`, `wide_resnet101`, `resnext50`, `resnext101`, `efficientnet_b0`..`efficientnet_b7`, `efficientnetv2_s`/`m`/`l`, `mobilenet_v2`, `mobilenet_v3_small`/`large`, `vgg11`/`13`/`16`/`19`, `densenet121`/`169`/`201`, `convnext_tiny`/`small`/`base`/`large`.
+- **`TRANSFORMER_PRESETS`**: `vit_tiny`, `vit_small`, `vit_base`, `vit_large`, `vit_huge`, `deit_tiny`, `deit_small`, `deit_base`, `swin_tiny`, `swin_small`, `swin_base`, `swin_large`.
+- **`LLM_PRESETS`**: `tiny_gpt`, `gpt2`, `gpt2_medium`, `gpt2_large`, `gpt_125m`, `gpt_350m`, `gpt_1b`, `gpt_3b`, `llama_1b`, `llama_3b`, `llama_7b`, `mistral_7b`.
+- **`VLM_PRESETS`**: `clip_tiny`, `clip_base`, `clip_large`, `blip_base`.
+- **`AUDIO_PRESETS`**: `audio_cnn`, `audio_transformer`.
+- **`TABULAR_PRESETS`**: `tabular_mlp`, `tabular_resnet`.
+- **`GENERATIVE_PRESETS`**: `vae_small`, `vae_base`, `ddpm_small`.
+- **`RNN_PRESETS`**: `lstm_small`, `lstm_base`, `lstm_large`, `gru_base`.
 
-### Transformers
+## Built-In `DATASET_PRESETS`
 
-| Preset | Description |
-|--------|-------------|
-| `vit_tiny/small/base/large/huge` | Vision Transformer |
-| `deit_tiny/small/base` | DeiT |
-| `swin_tiny/small/base/large` | Swin Transformer |
-
-### Datasets
-
-| Preset | Classes | Size |
-|--------|---------|------|
-| `cifar10` | 10 | 32x32 |
-| `cifar100` | 100 | 32x32 |
-| `mnist` | 10 | 28x28 |
-| `imagenet` | 1000 | 224x224 |
+- **Vision**: `cifar10`, `cifar100`, `imagenet`, `imagenet21k`, `mnist`, `fashion_mnist`.
+- **Language**: `wikitext`, `openwebtext`, `c4`, `pile`.
+- **Multimodal**: `coco`, `flickr30k`.

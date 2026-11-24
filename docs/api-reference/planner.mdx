@@ -1,0 +1,61 @@
+---
+title: 'Planner & Fault Recovery'
+description: 'API reference for ExecutionPlanner, ExecutionPlan, RuntimeGuard, and batch splitting'
+icon: 'shield-halved'
+---
+
+```python
+from kitepy import ExecutionPlan, ExecutionPlanner, RuntimeGuard
+from kitepy.core.planner import estimate_static_memory_mb, split_batch_into_micro_batches
+```
+
+---
+
+## `ExecutionPlan` (Dataclass)
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `target_effective_batch_size` | `int` | — | Preserved global effective batch size |
+| `micro_batch_size` | `int` | — | Solved per-step micro-batch size |
+| `gradient_accumulation_steps` | `int` | — | Accumulation steps needed to hit target effective batch size |
+| `amp_enabled` | `bool` | — | Whether AMP is enabled |
+| `amp_dtype` | `str` | — | `"fp32"`, `"fp16"`, or `"bf16"` |
+| `gradient_checkpointing` | `bool` | — | True if enabled due to tight budget and model support |
+| `estimated_peak_memory_mb` | `float` | — | Estimated peak memory in MB |
+| `memory_budget_mb` | `float` | — | Resolved budget in MB |
+| `world_size` | `int` | `1` | Distributed world size |
+| `reason` | `str` | `"nominal"` | `"nominal"` or `"memory_constrained_split (...)"` |
+
+Includes `.to_dict() -> Dict[str, Any]`.
+
+---
+
+## `ExecutionPlanner`
+
+```python
+ExecutionPlanner(safety_factor: float = 0.85)
+```
+
+- **`resolve_memory_budget_mb(device: torch.device, explicit_budget_mb: Optional[float] = None) -> float`**: Returns `explicit_budget_mb` if `> 0`, otherwise CUDA free memory * `safety_factor`, or `8192.0` MB on CPU/MPS.
+- **`plan(model, device, target_batch_size, sample_batch, adapter, criterion, current_grad_accum=1, mixed_precision=True, memory_budget_mb=None, world_size=1) -> ExecutionPlan`**
+
+---
+
+## `RuntimeGuard`
+
+```python
+RuntimeGuard(auto_recover: bool = True, max_consecutive_nan_steps: int = 5)
+```
+
+- **Attributes**: `oom_recoveries: int`, `nan_skips: int`, `consecutive_nans: int`.
+- **`RuntimeGuard.is_oom_error(exc: BaseException) -> bool`** (static method)
+- **`check_finite_loss(loss: torch.Tensor) -> bool`**: Raises `RuntimeError` if `consecutive_nans >= max_consecutive_nan_steps`.
+- **`check_finite_gradients(model: nn.Module) -> bool`**: Checks all `param.grad` tensors before `optimizer.step()`.
+- **`stats() -> Dict[str, int]`**: Returns `{"oom_recoveries": int, "nan_skips": int}`.
+
+---
+
+## Utilities
+
+- **`estimate_static_memory_mb(model: nn.Module, bytes_per_param_state: float = 16.0) -> float`**
+- **`split_batch_into_micro_batches(batch: Any, num_chunks: int) -> List[Any]`**: Recursively splits tensors, `Mapping` dicts, collated `(inputs, targets)` tuples/lists, and detection batches cleanly along batch dimension 0.

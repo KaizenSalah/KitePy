@@ -16,7 +16,7 @@
     "links": [
       {
         "label": "GitHub",
-        "href": "https://github.com/ExtraKaizen/kitepy"
+        "href": "https://github.com/KaizenSalah/kitepy"
       }
     ],
     "primary": {
@@ -43,33 +43,48 @@
             "pages": [
               "concepts/philosophy",
               "concepts/architecture",
-              "concepts/configuration"
+              "concepts/configuration",
+              "concepts/adapters"
             ]
           },
           {
-            "group": "Vision Models",
+            "group": "Vision Pillar",
             "pages": [
               "vision/cnn",
               "vision/transformers",
+              "vision/tasks",
               "vision/datasets",
               "vision/augmentation"
             ]
           },
           {
-            "group": "Training",
+            "group": "All Domain Pillars",
+            "pages": [
+              "pillars/language",
+              "pillars/multimodal",
+              "pillars/audio",
+              "pillars/tabular",
+              "pillars/generative"
+            ]
+          },
+          {
+            "group": "Training & Systems",
             "pages": [
               "training/basics",
-              "training/callbacks",
               "training/optimization",
+              "training/callbacks",
+              "training/planner-and-recovery",
               "training/distributed"
             ]
           },
           {
-            "group": "Advanced",
+            "group": "Production & Advanced",
             "pages": [
               "advanced/transfer-learning",
-              "advanced/profiling",
+              "advanced/serialization-and-security",
               "advanced/export",
+              "advanced/serving-and-cli",
+              "advanced/profiling",
               "advanced/hyperparameter-tuning"
             ]
           }
@@ -79,11 +94,22 @@
         "tab": "API Reference",
         "groups": [
           {
-            "group": "Models",
+            "group": "Base & Vision",
             "pages": [
+              "api-reference/base-model",
               "api-reference/cnn",
               "api-reference/transformer",
               "api-reference/vision"
+            ]
+          },
+          {
+            "group": "Domain Pillars",
+            "pages": [
+              "api-reference/language",
+              "api-reference/multimodal",
+              "api-reference/audio",
+              "api-reference/tabular",
+              "api-reference/generative"
             ]
           },
           {
@@ -95,18 +121,23 @@
             ]
           },
           {
-            "group": "Core",
+            "group": "Core Systems",
             "pages": [
               "api-reference/engine",
+              "api-reference/adapters",
+              "api-reference/planner",
               "api-reference/callbacks",
+              "api-reference/lr-finder",
               "api-reference/metrics"
             ]
           },
           {
-            "group": "Utilities",
+            "group": "Security, Presets & CLI",
             "pages": [
+              "api-reference/serialization-and-logging",
               "api-reference/presets",
-              "api-reference/utils"
+              "api-reference/utils",
+              "api-reference/cli"
             ]
           }
         ]
@@ -115,16 +146,25 @@
         "tab": "Examples",
         "groups": [
           {
-            "group": "Tutorials",
+            "group": "Core & Vision",
             "pages": [
               "examples/quickstart-cnn",
               "examples/quickstart-vit",
               "examples/transfer-learning",
-              "examples/custom-model"
+              "examples/custom-model",
+              "examples/vision-segmentation-detection"
             ]
           },
           {
-            "group": "Real-World Projects",
+            "group": "Cross-Pillar & Production",
+            "pages": [
+              "examples/llm-lora-chat",
+              "examples/multimodal-audio-tabular-generative",
+              "examples/memory-budget-planner-and-serving"
+            ]
+          },
+          {
+            "group": "Benchmarks & Datasets",
             "pages": [
               "examples/cifar-classification",
               "examples/imagenet-training",
@@ -138,7 +178,7 @@
       "anchors": [
         {
           "anchor": "GitHub",
-          "href": "https://github.com/ExtraKaizen/kitepy",
+          "href": "https://github.com/KaizenSalah/kitepy",
           "icon": "github"
         },
         {
@@ -151,7 +191,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/ExtraKaizen/kitepy"
+      "github": "https://github.com/KaizenSalah/kitepy"
     }
   }
 }
