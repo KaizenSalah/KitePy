@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from kitepy.core.adapters import get_adapter
 from kitepy.core.base import BaseModel
 from kitepy.core.config import VLMConfig
+from kitepy.core.utils import get_model_device
 from kitepy.pillars.language.data import SimpleCharTokenizer
 
 
@@ -100,7 +101,7 @@ class VLM(BaseModel):
         if self.model is None:
             self._build_model()
         self.model.eval()
-        device = self.device if self.device is not None else next(self.model.parameters()).device
+        device = get_model_device(self.model, self.device)
 
         if texts is None:
             raise ValueError("Provide `texts=[...]` for VLM zero-shot prediction.")

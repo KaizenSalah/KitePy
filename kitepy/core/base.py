@@ -11,6 +11,7 @@ import importlib
 import inspect
 import json
 from pathlib import Path
+import sys
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -35,10 +36,25 @@ from .utils import (
     get_device,
     get_gpu_memory,
     get_head_parameter_names,
+    get_model_device,
     get_module_blocks,
     print_model_summary,
     set_seed,
 )
+
+
+def _is_single_predict_input(raw_inputs: Any, prepared: Any) -> bool:
+    """Determine whether predict() input represents one sample rather than a batch list."""
+    if not isinstance(raw_inputs, list):
+        return True
+    if raw_inputs and isinstance(raw_inputs[0], (int, float, list, tuple)) and isinstance(prepared, torch.Tensor):
+        depth = 0
+        cur: Any = raw_inputs
+        while isinstance(cur, list):
+            depth += 1
+            cur = cur[0] if cur else None
+        return depth < prepared.ndim
+    return False
 
 
 def _to_jsonable(obj: Any) -> Any:
@@ -311,7 +327,8 @@ class BaseModel:
             return
 
         if "num_classes" in metadata and "num_classes" not in self._explicit_model_fields:
-            if hasattr(self.config, "num_classes"):
+            task_hint = (getattr(self, "task", None) or getattr(self.train_config, "task", None) or "").lower()
+            if task_hint not in ("binary", "regression") and hasattr(self.config, "num_classes"):
                 inferred = int(metadata["num_classes"])
                 if self.config.num_classes != inferred:
                     self.config.num_classes = inferred
@@ -338,6 +355,15 @@ class BaseModel:
             else:
                 train_config.batch_size = 32
             print(f"ℹ️  Auto-selected batch_size={train_config.batch_size}")
+
+    def _adjust_runtime_defaults(self, train_config: TrainingConfig, explicit_train_kw: Optional[Dict[str, Any]] = None):
+        """Normalize CPU and Windows DataLoader defaults safely unless explicitly overridden."""
+        if not torch.cuda.is_available():
+            if train_config.mixed_precision is True:
+                train_config.mixed_precision = False
+            train_config.pin_memory = False
+            if sys.platform == "win32" and train_config.num_workers > 0 and "num_workers" not in (explicit_train_kw or {}):
+                train_config.num_workers = 0
 
     def train(
         self,
@@ -368,11 +394,7 @@ class BaseModel:
         data_config: DataConfig = merge_configs(self.data_config, **data_kw)
         validate_config(train_config)
 
-        # Auto-adjust CPU defaults
-        if not torch.cuda.is_available():
-            if train_config.mixed_precision is True:
-                train_config.mixed_precision = False
-            train_config.pin_memory = False
+        self._adjust_runtime_defaults(train_config, train_kw)
 
         self._resolve_auto_batch_size(train_config)
         set_seed(train_config.seed, deterministic=train_config.deterministic)
@@ -417,7 +439,10 @@ class BaseModel:
         self.is_trained = True
 
         if history:
-            best_val = history[-1].get("val_loss", history[-1].get("train_loss", "N/A"))
+            last = history[-1]
+            best_val = last.get("val_loss")
+            if best_val is None:
+                best_val = last.get("train_loss", "N/A")
             print(f"\n✓ Training complete! Final metric: {best_val}")
 
         return self
@@ -436,10 +461,7 @@ class BaseModel:
         _, data_kw, train_kw, _ = split_kwargs(kwargs, self.default_config_class)
         train_config = merge_configs(self.train_config, **train_kw)
         data_config = merge_configs(self.data_config, test_data=data if isinstance(data, str) else None, **data_kw)
-        if not torch.cuda.is_available():
-            train_config.pin_memory = False
-            if train_config.mixed_precision is True:
-                train_config.mixed_precision = False
+        self._adjust_runtime_defaults(train_config, train_kw)
 
         if isinstance(data, DataLoader):
             test_loader = data
@@ -477,7 +499,7 @@ class BaseModel:
             raise RuntimeError("Model not initialized. Build, train, or load a model first.")
 
         self.model.eval()
-        device = self.device if self.device is not None else next(self.model.parameters()).device
+        device = get_model_device(self.model, self.device)
 
         prepared = self._preprocess_input(inputs)
         prepared = move_to_device(prepared, device)
@@ -501,6 +523,8 @@ class BaseModel:
             or "classification"
         ).lower()
 
+        single_input = _is_single_predict_input(inputs, prepared)
+
         if not isinstance(logits, torch.Tensor):
             if isinstance(logits, list) and top_k is not None:
                 formatted = []
@@ -512,13 +536,13 @@ class BaseModel:
                         formatted.append({dk: _to_jsonable(dv[order]) if isinstance(dv, torch.Tensor) else _to_jsonable(dv) for dk, dv in det.items()})
                     else:
                         formatted.append(_to_jsonable(det))
-                return formatted[0] if len(formatted) == 1 and not isinstance(inputs, list) else formatted
+                return formatted[0] if len(formatted) == 1 and single_input else formatted
             return _to_jsonable(logits) if return_probs else logits
 
         if task_name == "regression":
             if top_k is not None:
                 vals = logits.squeeze(-1).detach().cpu().tolist() if (logits.ndim == 2 and logits.size(-1) == 1) else logits.detach().cpu().tolist()
-                if isinstance(vals, list) and len(vals) == 1 and not isinstance(inputs, list):
+                if isinstance(vals, list) and len(vals) == 1 and single_input:
                     return vals[0]
                 return vals
             return logits
@@ -538,7 +562,7 @@ class BaseModel:
                     label = self.class_names[idx] if (self.class_names and idx < len(self.class_names)) else str(idx)
                     row_preds.append({"class_id": idx, "label": label, "confidence": float(score)})
                 results.append(row_preds)
-            return results[0] if len(results) == 1 and not isinstance(inputs, list) else results
+            return results[0] if len(results) == 1 and single_input else results
 
         if return_probs:
             if task_name == "binary" and (logits.ndim == 1 or (logits.ndim == 2 and logits.size(-1) == 1)):
@@ -890,7 +914,7 @@ class BaseModel:
                 format = "torchscript"
 
         self.model.eval()
-        original_device = next(self.model.parameters()).device
+        original_device = get_model_device(self.model)
         shape = input_shape or self._default_input_shape()
 
         if format == "onnx":
@@ -936,7 +960,8 @@ class BaseModel:
         elif format == "safetensors":
             try:
                 from safetensors.torch import save_file
-                tensors = {k: v.detach().cpu().contiguous() for k, v in self.model.state_dict().items()}
+                from .serialization import prepare_safetensors_state_dict
+                tensors = prepare_safetensors_state_dict(self.model.state_dict())
                 save_file(tensors, path)
                 print(f"✓ Exported weights to SafeTensors: {path}")
             except ImportError:
@@ -954,9 +979,7 @@ class BaseModel:
         _, data_kw, train_kw, _ = split_kwargs(kwargs, self.default_config_class)
         train_config = merge_configs(self.train_config, **train_kw)
         data_config = merge_configs(self.data_config, **data_kw)
-
-        if not torch.cuda.is_available():
-            train_config.pin_memory = False
+        self._adjust_runtime_defaults(train_config, train_kw)
 
         train_loader, _, _, metadata = self._resolve_data(data, data_config, train_config)
         self._auto_align_model_to_data(metadata)

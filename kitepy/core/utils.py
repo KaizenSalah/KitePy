@@ -9,6 +9,7 @@ from pathlib import Path
 import os
 import random
 import re
+import sys
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
@@ -38,6 +39,23 @@ def get_device(device: Union[str, int, torch.device] = "auto") -> torch.device:
         raise ValueError(f"GPU {device} not available")
 
     return torch.device(device)
+
+
+def get_model_device(
+    model: Optional[nn.Module],
+    explicit_device: Optional[torch.device] = None,
+) -> torch.device:
+    """Resolve model device safely, supporting parameterless or dynamically quantized modules."""
+    if explicit_device is not None:
+        return explicit_device
+    if model is not None:
+        first_param = next(model.parameters(), None)
+        if first_param is not None:
+            return first_param.device
+        first_buf = next(model.buffers(), None)
+        if first_buf is not None:
+            return first_buf.device
+    return torch.device("cpu")
 
 
 def get_num_gpus() -> int:
@@ -395,7 +413,8 @@ def cleanup_old_checkpoints(
 
     for ckpt, _ in checkpoint_metrics[keep_top_k:]:
         ckpt.unlink()
-        print(f"Deleted old checkpoint: {ckpt.name}")
+        from .logging import get_logger
+        get_logger("kitepy.utils").debug(f"Deleted old checkpoint: {ckpt.name}")
 
 
 # ============================================================================
@@ -535,6 +554,7 @@ def print_version_info():
 
 __all__ = [
     "get_device",
+    "get_model_device",
     "get_num_gpus",
     "get_gpu_memory",
     "print_device_info",

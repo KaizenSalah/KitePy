@@ -1023,6 +1023,7 @@ class Engine:
             if self.config.max_steps is not None and self.global_step >= self.config.max_steps:
                 break
 
+        pbar.clear()
         pbar.close()
         if batches_run == 0:
             raise ValueError(

@@ -219,14 +219,15 @@ def load_vision_data_with_meta(
     preset = DATASET_PRESETS.get(dataset_name, {})
     target_img_size = data_config.img_size or preset.get("img_size", 224)
     in_channels = data_config.in_channels or 3
-    num_classes = data_config.num_classes or preset.get("num_classes", 10)
+    task_name_hint = (getattr(train_config, "task", None) or "classification").lower()
+    num_classes = data_config.num_classes or preset.get("num_classes", 1 if task_name_hint in ("binary", "regression") else 10)
     is_grayscale_dataset = dataset_name in ("mnist", "fashion_mnist", "fashion-mnist")
 
     if "class_names" in preset:
         metadata["class_names"] = list(preset["class_names"])
     if "num_classes" in preset:
         metadata["num_classes"] = int(preset["num_classes"])
-    elif dataset_name == "synthetic":
+    elif dataset_name == "synthetic" and task_name_hint not in ("binary", "regression"):
         metadata["num_classes"] = int(num_classes)
 
     train_transform = get_train_transforms(

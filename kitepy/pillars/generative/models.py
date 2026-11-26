@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from kitepy.core.adapters import get_adapter
 from kitepy.core.base import BaseModel
 from kitepy.core.config import GenerativeConfig
+from kitepy.core.utils import get_model_device
 
 
 class ConvVAE(nn.Module):
@@ -66,7 +67,7 @@ class ConvVAE(nn.Module):
 
     @torch.no_grad()
     def sample(self, n: int = 4, device: Optional[torch.device] = None) -> torch.Tensor:
-        dev = device or next(self.parameters()).device
+        dev = get_model_device(self, device)
         z = torch.randn(n, self.latent_dim, device=dev)
         return self.decode(z)
 
@@ -183,7 +184,7 @@ class Generative(BaseModel):
         if self.model is None:
             self._build_model()
         self.model.eval()
-        device = self.device if self.device is not None else next(self.model.parameters()).device
+        device = get_model_device(self.model, self.device)
         if hasattr(self.model, "sample"):
             return self.model.sample(n=n, device=device)
         raise NotImplementedError("Underlying model does not implement .sample(n)")

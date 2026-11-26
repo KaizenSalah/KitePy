@@ -58,6 +58,7 @@ def _attach_file_handler(logger: logging.Logger, filepath: str, formatter: loggi
     Path(filepath).parent.mkdir(parents=True, exist_ok=True)
     handler = logging.FileHandler(filepath, encoding="utf-8")
     handler.setFormatter(formatter)
+    handler.addFilter(_RankZeroFilter())
     logger.addHandler(handler)
 
 

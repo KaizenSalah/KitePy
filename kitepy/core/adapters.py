@@ -247,6 +247,17 @@ def _accepts_keyword_input(model: nn.Module, key: str = "input_ids") -> bool:
     return key in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
 
 
+def _filter_forward_kwargs(model: nn.Module, batch_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Filter mapping kwargs to only arguments accepted by model.forward (unless it takes **kwargs)."""
+    try:
+        params = inspect.signature(model.forward).parameters
+    except (ValueError, TypeError):
+        return batch_dict
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return batch_dict
+    return {k: v for k, v in batch_dict.items() if k in params}
+
+
 class CausalLMAdapter(TaskAdapter):
     """Autoregressive causal language modeling (tracks loss & perplexity)."""
 
@@ -258,7 +269,7 @@ class CausalLMAdapter(TaskAdapter):
             batch_dict = dict(batch)
             labels = batch_dict.get("labels", batch_dict.get("input_ids"))
             if _accepts_keyword_input(model, "input_ids"):
-                outputs = model(**batch_dict)
+                outputs = model(**_filter_forward_kwargs(model, batch_dict))
             else:
                 outputs = model(batch_dict["input_ids"])
             logits = getattr(outputs, "logits", outputs)

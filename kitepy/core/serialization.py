@@ -76,6 +76,24 @@ def atomic_torch_save(obj: Any, path: Union[str, Path]):
         raise
 
 
+def prepare_safetensors_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """Detach, move to CPU, and clone aliased/tied storages so safetensors never rejects shared memory."""
+    seen_ptrs = set()
+    tensors: Dict[str, torch.Tensor] = {}
+    for k, v in state_dict.items():
+        t = v.detach().cpu().contiguous()
+        try:
+            storage_key = (t.untyped_storage().data_ptr(), t.storage_offset())
+        except Exception:
+            storage_key = (t.data_ptr(), 0)
+        if storage_key in seen_ptrs:
+            t = t.clone()
+        else:
+            seen_ptrs.add(storage_key)
+        tensors[k] = t
+    return tensors
+
+
 def save_safe_bundle(state_dict: Dict[str, torch.Tensor], metadata: Dict[str, Any], path: Union[str, Path]):
     """
     Save model weights with `safetensors` (zero pickle!) plus a `.meta.json` sidecar.
@@ -90,7 +108,7 @@ def save_safe_bundle(state_dict: Dict[str, torch.Tensor], metadata: Dict[str, An
         target = target.with_suffix(".safetensors")
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    tensors = {k: v.detach().cpu().contiguous() for k, v in state_dict.items()}
+    tensors = prepare_safetensors_state_dict(state_dict)
     fd, tmp_name = tempfile.mkstemp(prefix=".tmp_", suffix=".safetensors", dir=str(target.parent))
     os.close(fd)
     try:
@@ -127,6 +145,7 @@ __all__ = [
     "get_lineage_metadata",
     "atomic_write_text",
     "atomic_torch_save",
+    "prepare_safetensors_state_dict",
     "save_safe_bundle",
     "load_safe_bundle",
 ]

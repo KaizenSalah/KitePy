@@ -18,6 +18,7 @@ import torch.nn.functional as F
 from kitepy.core.adapters import get_adapter
 from kitepy.core.base import BaseModel
 from kitepy.core.config import DataConfig, LLMConfig, TrainingConfig
+from kitepy.core.utils import get_model_device
 from .data import SimpleCharTokenizer
 
 
@@ -279,7 +280,7 @@ class LLM(BaseModel):
         if self.model is None:
             self._build_model()
         self.model.eval()
-        device = self.device if self.device is not None else next(self.model.parameters()).device
+        device = get_model_device(self.model, self.device)
         tok = self._ensure_tokenizer()
 
         if hasattr(self.model, "generate") and not isinstance(self.model, TinyGPT):

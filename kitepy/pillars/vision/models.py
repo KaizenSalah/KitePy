@@ -303,6 +303,7 @@ class Vision(_VisionMixin, BaseModel):
         if "num_classes" not in self._explicit_model_fields:
             if self.task in ("binary", "regression"):
                 self.config.num_classes = 1
+                self._explicit_model_fields.add("num_classes")
             elif self.task == "segmentation":
                 self.config.num_classes = 2
         self.default_task = adapter_name

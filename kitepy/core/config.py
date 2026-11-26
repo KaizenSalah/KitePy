@@ -486,7 +486,7 @@ class ExperimentConfig(BaseConfig):
         data_raw = data.pop("data", None)
 
         if isinstance(model_raw, dict):
-            model_cfg = model_cls.from_dict(model_raw, strict=False)
+            model_cfg = model_cls.from_dict(model_raw, strict=strict)
         elif isinstance(model_raw, BaseConfig):
             model_cfg = model_raw
         else:
@@ -611,6 +611,12 @@ def validate_config(config: BaseConfig) -> bool:
             for group_name, val in config.lr.items():
                 if val <= 0:
                     raise ValueError(f"learning rate for '{group_name}' must be positive")
+
+    elif isinstance(config, DataConfig):
+        if isinstance(config.val_split, float) and not (0.0 <= config.val_split < 1.0):
+            raise ValueError("val_split must be in [0.0, 1.0)")
+        if config.max_length is not None and config.max_length <= 0:
+            raise ValueError("max_length must be positive")
 
     return True
 
