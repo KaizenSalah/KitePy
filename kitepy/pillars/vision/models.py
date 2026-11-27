@@ -56,14 +56,15 @@ class SimpleUNet(nn.Module):
 
 class TinyDetector(nn.Module):
     """
-    Lightweight built-in object detector following the torchvision detection contract:
+    Lightweight built-in multi-object detector following the torchvision detection contract:
     - training: forward(images, targets) -> {"loss_box": Tensor, "loss_cls": Tensor}
     - eval:     forward(images) -> [{"boxes": Tensor[N,4], "labels": Tensor[N], "scores": Tensor[N]}, ...]
     """
 
-    def __init__(self, in_channels: int = 3, num_classes: int = 10):
+    def __init__(self, in_channels: int = 3, num_classes: int = 10, num_queries: int = 5):
         super().__init__()
-        self.num_classes = num_classes
+        self.num_classes = max(2, num_classes)
+        self.num_queries = max(1, num_queries)
         self.backbone = nn.Sequential(
             nn.Conv2d(in_channels, 32, 3, stride=2, padding=1),
             nn.ReLU(inplace=True),
@@ -72,44 +73,55 @@ class TinyDetector(nn.Module):
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
         )
-        self.box_head = nn.Linear(64, 4)
-        self.cls_head = nn.Linear(64, num_classes)
+        self.box_head = nn.Linear(64, self.num_queries * 4)
+        self.cls_head = nn.Linear(64, self.num_queries * self.num_classes)
 
-    def forward(self, images: List[torch.Tensor], targets: Optional[List[Dict[str, torch.Tensor]]] = None):
+    def forward(self, images: Union[torch.Tensor, List[torch.Tensor]], targets: Optional[List[Dict[str, torch.Tensor]]] = None):
         x = torch.stack(images, dim=0) if isinstance(images, (list, tuple)) else images
         feats = self.backbone(x)
-        pred_boxes = torch.sigmoid(self.box_head(feats)) * float(x.shape[-1])
-        pred_logits = self.cls_head(feats)
+        bsz = x.size(0)
+        raw_boxes = torch.sigmoid(self.box_head(feats)).view(bsz, self.num_queries, 4) * float(x.shape[-1])
+        pred_logits = self.cls_head(feats).view(bsz, self.num_queries, self.num_classes)
 
         if self.training and targets is not None:
-            gt_boxes = []
-            gt_labels = []
-            for t in targets:
-                if len(t["boxes"]) > 0:
-                    gt_boxes.append(t["boxes"][0].float())
-                    gt_labels.append(t["labels"][0].long())
-                else:
-                    gt_boxes.append(torch.zeros(4, device=x.device))
-                    gt_labels.append(torch.tensor(0, device=x.device, dtype=torch.long))
-            gt_b = torch.stack(gt_boxes, dim=0)
-            gt_l = torch.stack(gt_labels, dim=0)
-            return {
-                "loss_box": F.smooth_l1_loss(pred_boxes, gt_b),
-                "loss_cls": F.cross_entropy(pred_logits, gt_l),
-            }
+            box_losses = []
+            gt_cls = torch.zeros((bsz, self.num_queries), device=x.device, dtype=torch.long)
+            for i, t in enumerate(targets):
+                n_obj = min(len(t["boxes"]), self.num_queries)
+                if n_obj > 0:
+                    box_losses.append(F.smooth_l1_loss(raw_boxes[i, :n_obj], t["boxes"][:n_obj].float()))
+                    gt_cls[i, :n_obj] = t["labels"][:n_obj].long().clamp(0, self.num_classes - 1)
+            loss_box = torch.stack(box_losses).mean() if box_losses else raw_boxes.sum() * 0.0
+            loss_cls = F.cross_entropy(pred_logits.view(-1, self.num_classes), gt_cls.view(-1))
+            return {"loss_box": loss_box, "loss_cls": loss_cls}
 
         probs = torch.softmax(pred_logits, dim=-1)
-        scores, labels = probs.max(dim=-1)
+        fg_probs = probs[..., 1:] if self.num_classes > 1 else probs
+        scores, labels = fg_probs.max(dim=-1)
+        if self.num_classes > 1:
+            labels = labels + 1
+
         results = []
-        for i in range(x.size(0)):
-            # Ensure valid [x1, y1, x2, y2] ordering
-            b = pred_boxes[i]
-            x1, y1 = torch.minimum(b[0], b[2]), torch.minimum(b[1], b[3])
-            x2, y2 = torch.maximum(b[0], b[2]) + 1.0, torch.maximum(b[1], b[3]) + 1.0
+        for i in range(bsz):
+            keep = probs[i, :, 0] < 0.7
+            if not keep.any():
+                top_idx = scores[i].argmax().unsqueeze(0)
+                b_sel = raw_boxes[i, top_idx]
+                l_sel = labels[i, top_idx]
+                s_sel = scores[i, top_idx]
+            else:
+                b_sel = raw_boxes[i, keep]
+                l_sel = labels[i, keep]
+                s_sel = scores[i, keep]
+
+            x1 = torch.minimum(b_sel[:, 0], b_sel[:, 2])
+            y1 = torch.minimum(b_sel[:, 1], b_sel[:, 3])
+            x2 = torch.maximum(b_sel[:, 0], b_sel[:, 2]) + 1.0
+            y2 = torch.maximum(b_sel[:, 1], b_sel[:, 3]) + 1.0
             results.append({
-                "boxes": torch.stack([x1, y1, x2, y2]).unsqueeze(0),
-                "labels": labels[i].unsqueeze(0),
-                "scores": scores[i].unsqueeze(0),
+                "boxes": torch.stack([x1, y1, x2, y2], dim=-1),
+                "labels": l_sel,
+                "scores": s_sel,
             })
         return results
 
@@ -120,6 +132,9 @@ class TinyDetector(nn.Module):
 
 class _VisionMixin:
     """Shared real-world image preprocessing for CNN, Transformer, and Vision."""
+
+    config: Any
+    data_config: Any
 
     def _preprocess_single_image(self, item: Any, img_size: int, in_channels: int) -> torch.Tensor:
         from PIL import Image

@@ -2,6 +2,7 @@
 Multimodal Pillar - Vision-Language Models (CLIP-style contrastive VLM & HuggingFace CLIP).
 """
 
+from collections.abc import Mapping
 import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -96,24 +97,51 @@ class VLM(BaseModel):
         print(f"✓ Created VLM model: {self.model_name} ({sum(p.numel() for p in self.model.parameters()):,} params)")
 
     @torch.no_grad()
-    def predict(self, image: Any, texts: Optional[List[str]] = None, **kwargs) -> Any:
-        """Compute zero-shot probabilities over candidate text descriptions (supports Tensor, PIL, or file path)."""
+    def predict(
+        self,
+        inputs: Any,
+        return_probs: bool = True,
+        top_k: Optional[int] = None,
+        texts: Optional[List[str]] = None,
+        **kwargs,
+    ) -> Any:
+        """
+        Compute zero-shot probabilities over candidate text descriptions.
+
+        Supports:
+        - `vlm.predict(image, texts=["cat", "dog"])`
+        - `vlm.predict({"image": image, "texts": ["cat", "dog"]})` (compatible with BaseModel.to_fastapi())
+        """
         if self.model is None:
             self._build_model()
+        assert self.model is not None
         self.model.eval()
         device = get_model_device(self.model, self.device)
 
-        if texts is None:
-            raise ValueError("Provide `texts=[...]` for VLM zero-shot prediction.")
+        # Backward compatibility if caller passed list of texts as second positional argument
+        if isinstance(return_probs, list) and texts is None:
+            texts = return_probs
+            return_probs = True
+
+        image = inputs
+        if isinstance(inputs, Mapping):
+            image = inputs.get("image", inputs.get("pixel_values", inputs))
+            if texts is None:
+                texts = inputs.get("texts", inputs.get("labels"))
+
+        if not texts:
+            raise ValueError("Provide `texts=[...]` (or `{'image': ..., 'texts': [...]}`) for VLM prediction.")
 
         if isinstance(image, (str, Path)):
             from PIL import Image
             image = Image.open(image).convert("RGB")
+        elif isinstance(image, list):
+            image = torch.as_tensor(image, dtype=torch.float32)
 
         if self.processor is not None:
-            inputs = self.processor(text=texts, images=image, return_tensors="pt", padding=True)
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-            outputs = self.model(**inputs)
+            proc_inputs = self.processor(text=texts, images=image, return_tensors="pt", padding=True)
+            proc_inputs = {k: v.to(device) for k, v in proc_inputs.items()}
+            outputs = self.model(**proc_inputs)
             logits_per_image = outputs.logits_per_image
         else:
             if not isinstance(image, torch.Tensor):
@@ -128,7 +156,14 @@ class VLM(BaseModel):
             logits_per_image, _ = self.model(image, tok)
 
         probs = torch.softmax(logits_per_image, dim=-1)
-        return probs if kwargs.get("return_probs", True) else logits_per_image
+        if top_k is not None:
+            k = min(top_k, probs.size(-1))
+            vals, idxs = torch.topk(probs[0], k=k)
+            return [
+                {"class_id": int(idx), "label": str(texts[idx]), "confidence": float(val)}
+                for val, idx in zip(vals.cpu().tolist(), idxs.cpu().tolist())
+            ]
+        return probs if return_probs else logits_per_image
 
 
 __all__ = ["VLM", "DualEncoderCLIP"]
