@@ -110,7 +110,7 @@ def format_chat_record(record: Any, tokenizer: Optional[Any] = None) -> str:
         msgs = record["messages"]
         if tokenizer is not None and hasattr(tokenizer, "apply_chat_template") and getattr(tokenizer, "chat_template", None):
             try:
-                return tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
+                return str(tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False))
             except Exception:
                 pass
         parts = []
@@ -294,6 +294,8 @@ def load_language_data(
     metadata: Dict[str, Any] = {}
 
     use_dynamic_collate = True
+    train_ds: Dataset
+    val_ds: Optional[Dataset] = None
 
     if dataset_name == "synthetic" or dataset_name is None:
         use_dynamic_collate = False

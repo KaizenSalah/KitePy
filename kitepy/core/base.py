@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 import sys
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -53,7 +53,7 @@ def _is_single_predict_input(raw_inputs: Any, prepared: Any) -> bool:
         while isinstance(cur, list):
             depth += 1
             cur = cur[0] if cur else None
-        return depth < prepared.ndim
+        return bool(depth < prepared.ndim)
     return False
 
 
@@ -88,7 +88,7 @@ class BaseModel:
     """
 
     modality: str = "vision"
-    default_config_class = ModelConfig
+    default_config_class: Type[BaseConfig] = ModelConfig
     default_task: str = "classification"
 
     def __init__(
@@ -102,7 +102,7 @@ class BaseModel:
         self.custom_model = model if isinstance(model, nn.Module) else None
         self.adapter = adapter
 
-        self._explicit_model_fields = set()
+        self._explicit_model_fields: Set[str] = set()
         self.class_names: Optional[List[str]] = None
         self.last_input_shape: Optional[Tuple[int, ...]] = None
 
@@ -118,9 +118,9 @@ class BaseModel:
         self._explicit_model_fields.update(model_kw.keys())
 
         # Handle config sources (ExperimentConfig, YAML/JSON file, dict, or ModelConfig)
-        user_model_cfg = None
-        user_data_cfg = None
-        user_train_cfg = None
+        user_model_cfg: Optional[Union[Dict[str, Any], BaseConfig]] = None
+        user_data_cfg: Optional[Union[Dict[str, Any], BaseConfig]] = None
+        user_train_cfg: Optional[Union[Dict[str, Any], BaseConfig]] = None
 
         if isinstance(config, ExperimentConfig):
             user_model_cfg = config.model
@@ -133,7 +133,7 @@ class BaseModel:
                 with open(config, "r", encoding="utf-8") as f:
                     raw = yaml.safe_load(f) or {}
                 if any(k in raw for k in ("model", "training", "data")):
-                    exp = ExperimentConfig.from_dict(raw, model_config_cls=self.default_config_class, strict=False)
+                    exp = ExperimentConfig.from_dict(raw, model_config_cls=self.default_config_class, strict=False)  # type: ignore[arg-type]
                     user_model_cfg = exp.model
                     user_data_cfg = exp.data
                     user_train_cfg = exp.training
@@ -146,7 +146,7 @@ class BaseModel:
                 with open(config, "r", encoding="utf-8") as f:
                     raw = json.load(f)
                 if any(k in raw for k in ("model", "training", "data")):
-                    exp = ExperimentConfig.from_dict(raw, model_config_cls=self.default_config_class, strict=False)
+                    exp = ExperimentConfig.from_dict(raw, model_config_cls=self.default_config_class, strict=False)  # type: ignore[arg-type]
                     user_model_cfg = exp.model
                     user_data_cfg = exp.data
                     user_train_cfg = exp.training
@@ -159,7 +159,7 @@ class BaseModel:
             if any(k in config for k in ("model", "training", "data")) and all(
                 isinstance(config[k], (dict, BaseConfig)) for k in config if k in ("model", "training", "data")
             ):
-                exp = ExperimentConfig.from_dict(config, model_config_cls=self.default_config_class, strict=False)
+                exp = ExperimentConfig.from_dict(config, model_config_cls=self.default_config_class, strict=False)  # type: ignore[arg-type]
                 user_model_cfg = exp.model
                 user_data_cfg = exp.data
                 user_train_cfg = exp.training
@@ -170,7 +170,7 @@ class BaseModel:
             user_model_cfg = config
             self._explicit_model_fields.add("num_classes")
 
-        self.config = self._build_config(model, user_model_cfg, **model_kw)
+        self.config: Any = self._build_config(model, user_model_cfg, **model_kw)
         self.data_config: DataConfig = merge_configs(DataConfig(), user_config=user_data_cfg, **data_kw)
         self.train_config: TrainingConfig = merge_configs(TrainingConfig(), user_config=user_train_cfg, **train_kw)
 
@@ -406,6 +406,7 @@ class BaseModel:
         # Initialize model lazily
         if self.model is None:
             self._build_model()
+        assert self.model is not None
 
         if getattr(self.config, "freeze_backbone", False):
             self.freeze_backbone()
@@ -572,6 +573,22 @@ class BaseModel:
 
         return logits
 
+    def _extra_save_metadata(self) -> Dict[str, Any]:
+        """Optional hook for subclasses to persist extra JSON-safe metadata."""
+        return {}
+
+    def _load_extra_metadata(self, checkpoint: Mapping[str, Any]) -> None:
+        """Optional hook for subclasses to restore extra metadata from checkpoint."""
+        return None
+
+    def _save_external_artifacts(self, path: Path) -> None:
+        """Optional hook for subclasses to persist external directories (e.g. PEFT adapters)."""
+        return None
+
+    def _load_external_artifacts(self, path: Path, checkpoint: Mapping[str, Any]) -> bool:
+        """Optional hook returning True if model weights were already loaded externally."""
+        return False
+
     def save(self, path: Union[str, Path], save_config: bool = True, safe: Optional[bool] = None):
         """
         Save model checkpoint atomically with lineage metadata.
@@ -596,6 +613,8 @@ class BaseModel:
             else:
                 train_cfg_dict[k] = v
 
+        self._save_external_artifacts(path)
+
         metadata = _to_jsonable({
             "model_name": self.model_name,
             "modality": self.modality,
@@ -608,6 +627,7 @@ class BaseModel:
             "training_history": self.training_history,
             "last_input_shape": list(self.last_input_shape) if self.last_input_shape is not None else None,
             "lineage": get_lineage_metadata(),
+            **self._extra_save_metadata(),
         })
 
         if use_safe:
@@ -686,10 +706,14 @@ class BaseModel:
         instance.class_names = checkpoint.get("class_names")
         last_shape = checkpoint.get("last_input_shape")
         instance.last_input_shape = tuple(last_shape) if isinstance(last_shape, (list, tuple)) else None
+        instance._load_extra_metadata(checkpoint)
 
-        instance._build_model()
-        instance.model.load_state_dict(checkpoint["model_state_dict"])
+        if not instance._load_external_artifacts(p, checkpoint):
+            instance._build_model()
+            assert instance.model is not None
+            instance.model.load_state_dict(checkpoint["model_state_dict"])
 
+        assert instance.model is not None
         instance.is_trained = checkpoint.get("is_trained", True)
         instance.training_history = checkpoint.get("training_history", [])
 
@@ -750,15 +774,22 @@ class BaseModel:
         return self
 
     def quantize(self, bits: int = 8):
-        """Quantize model for faster CPU inference."""
+        """Quantize model for faster CPU inference (prefers torchao when available)."""
         if self.model is None:
             raise RuntimeError("Model not initialized. Call _build_model() first.")
         try:
             if bits == 8:
-                # PyTorch 2.x dynamic quantization
-                quant_fn = getattr(torch.ao.quantization, "quantize_dynamic", torch.quantization.quantize_dynamic)
-                self.model = quant_fn(self.model, {nn.Linear, nn.Conv2d}, dtype=torch.qint8)
-                print("✓ Model quantized to INT8")
+                try:
+                    from torchao.quantization import Int8DynamicActivationInt8WeightConfig, quantize_
+                    quantize_(self.model, Int8DynamicActivationInt8WeightConfig())
+                    print("✓ Model quantized to INT8 (torchao)")
+                except ImportError:
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", DeprecationWarning)
+                        quant_fn = getattr(torch.ao.quantization, "quantize_dynamic", torch.quantization.quantize_dynamic)
+                        self.model = quant_fn(self.model, {nn.Linear, nn.Conv2d}, dtype=torch.qint8)
+                    print("✓ Model quantized to INT8")
             else:
                 print(f"⚠️  {bits}-bit quantization requires specialized libraries (bitsandbytes)")
         except Exception as e:
@@ -840,6 +871,7 @@ class BaseModel:
         """Profile model: parameters, memory, latency, throughput."""
         if self.model is None:
             self._build_model()
+        assert self.model is not None
 
         if input_size is None:
             input_size = self._default_input_shape()
@@ -986,6 +1018,7 @@ class BaseModel:
 
         if self.model is None:
             self._build_model()
+        assert self.model is not None
 
         device = get_device(train_config.devices)
         self.model = self.model.to(device)
@@ -1050,7 +1083,8 @@ class BaseModel:
         for key, value in study.best_params.items():
             print(f"   {key}: {value}")
         print(f"   Best loss: {study.best_value:.4f}")
-        return study.best_params
+        best = study.best_params
+        return dict(best)
 
     def to_fastapi(self):
         """Create a ready-to-run FastAPI inference app for this model."""

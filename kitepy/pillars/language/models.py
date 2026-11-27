@@ -8,6 +8,7 @@ Supports:
 - .generate() for text generation and .predict() for logits/classifications
 """
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -187,7 +188,8 @@ class LLM(BaseModel):
 
         super().__init__(model, config, adapter=get_adapter(adapter_name), **kwargs)
         self.default_task = adapter_name
-        self.tokenizer = None
+        self.tokenizer: Any = None
+        self._peft_adapter_dir_name: Optional[str] = None
 
     def _is_hf_model(self) -> bool:
         return bool(
@@ -195,6 +197,51 @@ class LLM(BaseModel):
             and self.model_name != "tiny_gpt"
             and (self.config.pretrained or "/" in self.model_name or Path(self.model_name).is_dir())
         )
+
+    def _extra_save_metadata(self) -> Dict[str, Any]:
+        if self.model is not None and hasattr(self.model, "peft_config") and self._peft_adapter_dir_name:
+            return {"peft_adapter": True, "peft_adapter_dir": self._peft_adapter_dir_name}
+        return {}
+
+    def _save_external_artifacts(self, path: Path) -> None:
+        if self.model is not None and hasattr(self.model, "peft_config") and hasattr(self.model, "save_pretrained"):
+            adapter_dir = path.parent / f"{path.stem}.peft_adapter"
+            adapter_dir.mkdir(parents=True, exist_ok=True)
+            self.model.save_pretrained(str(adapter_dir))
+            if self.tokenizer is not None and hasattr(self.tokenizer, "save_pretrained"):
+                self.tokenizer.save_pretrained(str(adapter_dir))
+            self._peft_adapter_dir_name = adapter_dir.name
+
+    def _load_external_artifacts(self, path: Path, checkpoint: Mapping[str, Any]) -> bool:
+        if not checkpoint.get("peft_adapter") or not self._is_hf_model():
+            return False
+        adapter_dir_name = checkpoint.get("peft_adapter_dir") or f"{path.stem}.peft_adapter"
+        adapter_dir = path.parent / str(adapter_dir_name)
+        if not adapter_dir.is_dir():
+            return False
+        try:
+            from peft import PeftModel
+            from kitepy.pillars.vision.wrappers import create_hf_model, create_hf_tokenizer
+
+            base = create_hf_model(
+                model_name=self.model_name,
+                model_type=self.config.model_type,
+                num_labels=self.config.num_labels if self.config.model_type == "classification" else None,
+                pretrained=self.config.pretrained,
+                trust_remote_code=self.config.trust_remote_code,
+            )
+            self.model = PeftModel.from_pretrained(base, str(adapter_dir), is_trainable=True)
+            try:
+                self.tokenizer = create_hf_tokenizer(str(adapter_dir), trust_remote_code=self.config.trust_remote_code)
+            except Exception:
+                self._ensure_tokenizer()
+            if self.tokenizer is not None and getattr(self.tokenizer, "pad_token_id", None) is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            print(f"✓ Loaded PEFT adapter from {adapter_dir}")
+            return True
+        except Exception as e:
+            print(f"⚠️  PEFT adapter reload failed ({e}); falling back to state_dict load.")
+            return False
 
     def _ensure_tokenizer(self):
         if self.tokenizer is not None:
@@ -279,6 +326,7 @@ class LLM(BaseModel):
         """Generate text continuation from a prompt (or ChatML messages)."""
         if self.model is None:
             self._build_model()
+        assert self.model is not None
         self.model.eval()
         device = get_model_device(self.model, self.device)
         tok = self._ensure_tokenizer()
@@ -297,7 +345,7 @@ class LLM(BaseModel):
             if attn is not None:
                 gen_kwargs["attention_mask"] = attn.to(device)
             out_ids = self.model.generate(ids, **gen_kwargs)
-            return tok.decode(out_ids[0].tolist(), skip_special_tokens=True)
+            return str(tok.decode(out_ids[0].tolist(), skip_special_tokens=True))
 
         enc = tok(prompt, max_length=self.config.context_length, return_tensors="pt")
         ids = enc["input_ids"].to(device)
@@ -319,7 +367,7 @@ class LLM(BaseModel):
             if next_id.item() == eos_id:
                 break
 
-        return tok.decode(ids[0].tolist())
+        return str(tok.decode(ids[0].tolist()))
 
 
 class TextClassifier(LLM):

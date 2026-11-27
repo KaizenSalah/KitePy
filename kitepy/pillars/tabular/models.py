@@ -2,15 +2,16 @@
 Tabular Pillar - Tabular MLP & ResNet Models for Classification & Regression.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from collections.abc import Mapping
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-import numpy as np
 import torch
 import torch.nn as nn
 
 from kitepy.core.adapters import get_adapter
 from kitepy.core.base import BaseModel
 from kitepy.core.config import TabularConfig
+from .data import transform_tabular_inputs
 
 
 class _TabularResidualBlock(nn.Module):
@@ -91,9 +92,22 @@ class Tabular(BaseModel):
             kwargs.setdefault("loss", "mse")
         kwargs.setdefault("task", self.task)
         super().__init__(model, config, adapter=get_adapter(self.task), **kwargs)
+        self.preprocessor: Optional[Dict[str, Any]] = None
         if self.task == "regression" and "num_classes" not in self._explicit_model_fields:
             self.config.num_classes = 1
+            self._explicit_model_fields.add("num_classes")
         self.default_task = self.task
+
+    def _auto_align_model_to_data(self, metadata: Dict[str, Any]):
+        if metadata.get("preprocessor") is not None:
+            self.preprocessor = metadata["preprocessor"]
+        super()._auto_align_model_to_data(metadata)
+
+    def _extra_save_metadata(self) -> Dict[str, Any]:
+        return {"preprocessor": self.preprocessor} if self.preprocessor is not None else {}
+
+    def _load_extra_metadata(self, checkpoint: Mapping[str, Any]) -> None:
+        self.preprocessor = checkpoint.get("preprocessor")
 
     def _build_model(self):
         if self.custom_model is not None:
@@ -107,16 +121,10 @@ class Tabular(BaseModel):
         print(f"✓ Created Tabular model: {self.model_name} (in={self.config.input_dim}, task={self.task})")
 
     def _preprocess_input(self, input_data: Any) -> torch.Tensor:
-        if isinstance(input_data, torch.Tensor):
-            t = input_data.float()
-        else:
-            t = torch.as_tensor(np.asarray(input_data), dtype=torch.float32)
-        if t.ndim == 1:
-            t = t.unsqueeze(0)
-        return t
+        return transform_tabular_inputs(input_data, preprocessor=self.preprocessor)
 
-    def _default_input_shape(self):
-        return (1, self.config.input_dim)
+    def _default_input_shape(self) -> Tuple[int, ...]:
+        return (1, int(self.config.input_dim))
 
 
 __all__ = ["Tabular", "TabularResNet", "TabularMLP"]
