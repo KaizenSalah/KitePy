@@ -57,18 +57,26 @@ When >= 5 records exist, KitePy splits 80/20 train/validation reproducibly with 
 
 ---
 
-## `VLM.predict()` Parameters & Notes
+## `VLM.predict()` Parameters & FastAPI Serving
 
 ```python
-probs_or_logits = vlm.predict(image, texts=["label a", "label b"], return_probs=True)
+# Standard signature
+probs = vlm.predict(image, texts=["label a", "label b"], return_probs=True)
+
+# Top-k structured results
+top2 = vlm.predict(image, texts=["label a", "label b", "label c"], top_k=2)
+
+# Dict contract (also compatible with vlm.to_fastapi() `/predict`)
+probs = vlm.predict({"image": image, "texts": ["label a", "label b"]})
 ```
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `image` | `Tensor`, `PIL.Image.Image`, `str`, `Path` | required | File paths and PIL images are automatically opened/resized; HuggingFace models use `CLIPProcessor` |
-| `texts` | `List[str]` | `None` (raises `ValueError` if omitted) | Candidate text descriptions to score against `image` |
+| `inputs` | `Tensor`, `PIL.Image.Image`, `str`, `Path`, nested `list`, or `dict` (`{"image": ..., "texts": [...]}`) | required | File paths and PIL images are automatically opened/resized; HuggingFace models use `CLIPProcessor` |
 | `return_probs` | `bool` | `True` | Returns `torch.softmax(logits_per_image, dim=-1)` when `True`, raw `logits_per_image` when `False` |
+| `top_k` | `Optional[int]` | `None` | When set, returns score-sorted `[{"class_id", "label", "confidence"}, ...]` list |
+| `texts` | `Optional[List[str]]` | `None` | Candidate text descriptions (optional if provided inside `inputs["texts"]`; raises `ValueError` if empty/omitted) |
 
 <Note>
-**`to_fastapi()` & Presets Note**: Because `VLM.predict()` requires both `image` and `texts=[...]`, `BaseModel.to_fastapi()` (which calls `self.predict(inputs, top_k=...)`) is not intended for `VLM` in `0.2.1`. In addition, the built-in offline `DualEncoderCLIP` uses a fixed lightweight conv vision stem + embedding text encoder regardless of `VLMConfig.vision_model`/`text_model`; use a HuggingFace repo ID with `pretrained=True` to load full pretrained CLIP weights.
+The built-in offline `DualEncoderCLIP` uses a lightweight conv vision stem + embedding text encoder for fast offline training; pass a HuggingFace CLIP repo ID with `pretrained=True` to load full pretrained CLIP weights.
 </Note>

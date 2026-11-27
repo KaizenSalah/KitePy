@@ -30,15 +30,18 @@ VLM(
 
 ```python
 vlm.predict(
-    image: Any,
+    inputs: Any,
+    return_probs: bool = True,
+    top_k: Optional[int] = None,
     texts: Optional[List[str]] = None,
     **kwargs,
-) -> torch.Tensor
+) -> Any
 ```
 
-- `image`: `torch.Tensor` `(B, C, H, W)` / `(C, H, W)`, `PIL.Image.Image`, `str`, or `Path`.
-- `texts`: Required list of candidate text captions (`Raises ValueError` if `None`).
-- `kwargs.get("return_probs", True)`: Returns `torch.softmax(logits_per_image, dim=-1)` by default, or raw `logits_per_image` if `return_probs=False`.
+- `inputs`: `torch.Tensor` `(B, C, H, W)` / `(C, H, W)`, `PIL.Image.Image`, `str`, `Path`, nested numeric `list`, or mapping `{"image": ..., "texts": [...]}` (compatible with `to_fastapi()`).
+- `texts`: Required list of candidate captions unless supplied inside `inputs["texts"]` (raises `ValueError` if empty/omitted).
+- `return_probs`: Returns `torch.softmax(logits_per_image, dim=-1)` by default, or raw `logits_per_image` if `False`.
+- `top_k`: When provided, returns score-sorted `[{"class_id", "label", "confidence"}, ...]` list.
 
 ---
 

@@ -69,12 +69,11 @@ When `task="regression"`, `Tabular` automatically defaults to `loss="mse"`, `Reg
 
 ## How CSV Preprocessing Works
 
-When passing a `.csv` path to `.train()` (`pandas` required):
+When passing a `.csv` path to `.train()` (`pandas` required), `fit_tabular_preprocessor()` fits and persists the preprocessing schema (`model.preprocessor`):
 1. Treats the **last column** (`df.columns[-1]`) as the target and drops rows where the target is `NaN`.
-2. Applies `pd.get_dummies(df.drop(columns=[target_col]), drop_first=False)` for categorical feature columns.
-3. Imputes missing numeric features using column medians (`fillna(median).fillna(0.0)`), then standardizes features (`(vals - mean) / std`, clamping zero-variance columns to `std=1.0`).
-4. For `"classification"`, encodes categorical string/integer labels automatically and sets `num_classes` and `class_names`.
+2. Imputes missing numeric features using stored column medians (`fillna(median)`) and categorical missing entries as `"missing"`.
+3. Applies `pd.get_dummies(..., drop_first=False)` and stores the exact `dummy_columns` order.
+4. Standardizes features (`(vals - mean) / std`, clamping zero-variance columns to `std=1.0`) and stores `mean`/`std`.
+5. For `"classification"`, encodes categorical string/integer labels automatically and sets `num_classes` and `class_names`.
 
-<Note>
-**Inference Normalization Note (`v0.2.1`)**: Feature standardization and one-hot encoding run inside `load_tabular_data()` during CSV loading and are not stored inside `.save()` checkpoints. When calling `.predict()` on raw arrays after training on a CSV, pass pre-encoded, standardized numeric features matching `model.config.input_dim`.
-</Note>
+`model.preprocessor` is saved inside `.save()` checkpoints (including `.meta.json` for `safe=True`) and restored automatically by `Tabular.load()`, so reloaded models accept raw `dict`, `list[dict]`, `pandas.DataFrame`, `.csv` paths, or raw numeric rows in `.predict()` and `.to_fastapi()`.

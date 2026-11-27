@@ -88,15 +88,13 @@ llm.train(
 
 Otherwise, `"tiny_gpt"` uses the built-in pure-PyTorch `TinyGPT` paired with a byte-level `SimpleCharTokenizer` (`vocab_size=260`: `0=PAD`, `1=BOS`, `2=EOS`, `3..258=UTF-8 bytes`). If a HuggingFace tokenizer lacks `pad_token_id`, KitePy assigns `pad_token = eos_token`.
 
-### LoRA Injection (`lora=True`)
+### LoRA Injection (`lora=True`) & PEFT Persistence
 
 When `lora=True`, `LLM._build_model()`:
 1. Uses HuggingFace `peft` (`LoraConfig` + `get_peft_model`) if installed.
 2. Otherwise falls back seamlessly to KitePy's built-in `apply_builtin_lora()`, which freezes all base weights and wraps matching projection linear layers (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `out_proj`, `c_attn`, `c_proj`, `gate_proj`, `up_proj`, `down_proj`, `proj`, `qkv`) in `LoRALinear`.
 
-<Note>
-**Important note on HF PEFT LoRA persistence (`v0.2.1`)**: `BaseModel.save()` serializes `model.state_dict()` and config JSON rather than calling PEFT's `save_pretrained()` / `PeftModel.from_pretrained()`. Full `.save()` -> `.load()` roundtrips work directly for `TinyGPT` and standard models; saving/reloading PEFT LoRA adapters via `LLM.load()` is scheduled for an upcoming release (you can always access `llm.unwrap().save_pretrained(...)` in the meantime).
-</Note>
+When saving a PEFT-wrapped model (`llm.save("run.pt")` or `safe=True`), `LLM` automatically exports companion adapter weights and tokenizer files into `<stem>.peft_adapter/` via `save_pretrained()` and records `peft_adapter` metadata. Calling `LLM.load("run.pt")` reloads the base model and attaches the saved adapter via `PeftModel.from_pretrained()` cleanly (while built-in `TinyGPT` + LoRA bundles reload directly from `.pt` or `.safetensors`).
 
 ---
 

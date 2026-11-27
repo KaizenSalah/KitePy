@@ -15,7 +15,7 @@ from kitepy import (
     get_logger,
     set_log_level,
 )
-from kitepy.core.serialization import atomic_write_text
+from kitepy.core.serialization import atomic_write_text, prepare_safetensors_state_dict
 ```
 
 ### `get_lineage_metadata()`
@@ -47,7 +47,7 @@ save_safe_bundle(
 load_safe_bundle(path: Union[str, Path]) -> Tuple[Dict[str, torch.Tensor], Dict[str, Any]]
 ```
 
-Saves tensors to `.safetensors` (forcing `.safetensors` suffix, CPU contiguous tensors) and writes `<stem>.meta.json` atomically. `load_safe_bundle()` deserializes without executing pickle bytecode.
+Saves tensors to `.safetensors` (via `prepare_safetensors_state_dict()`, forcing `.safetensors` suffix, CPU contiguous tensors, and cloning shared/tied weight aliases safely) and writes `<stem>.meta.json` atomically. `load_safe_bundle()` deserializes without executing pickle bytecode.
 
 ---
 

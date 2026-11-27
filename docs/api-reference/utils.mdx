@@ -13,6 +13,7 @@ from kitepy import (
 )
 from kitepy.core.utils import (
     get_device,
+    get_model_device,
     get_num_gpus,
     get_gpu_memory,
     get_head_parameter_names,
@@ -35,6 +36,7 @@ from kitepy.core.utils import (
 ## Device & Reproducibility
 
 - **`get_device(device="auto") -> torch.device`**: Handles `"auto"` (`cuda` -> `mps` -> `cpu`), integer GPU index, `"cpu"`, `"cuda"`, `"mps"`.
+- **`get_model_device(model, explicit_device=None) -> torch.device`**: Safely resolves device even for dynamically quantized or parameterless modules.
 - **`get_num_gpus() -> int`**, **`get_gpu_memory(device=0) -> float`** (free GB)
 - **`print_device_info()`**, **`print_version_info()`**
 - **`set_seed(seed=42, deterministic=False)`**: Seeds `random`, `numpy`, `torch`, CUDA, and optionally enables deterministic algorithms + disables cuDNN benchmark.

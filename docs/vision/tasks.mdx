@@ -82,5 +82,5 @@ frcnn = Vision(task="detection", model="fasterrcnn_resnet50_fpn", num_classes=4,
 </CodeGroup>
 
 <Note>
-`TinyDetector` is a lightweight baseline detector built for single-box-per-image smoke runs and fast verification (`boxes[0]`, `labels[0]`). For real multi-object detection datasets, pass any `torchvision.models.detection` model name such as `"fasterrcnn_resnet50_fpn"` or `"ssdlite320_mobilenet_v3_large"`, or a custom `nn.Module` following the torchvision `(images, targets) -> losses` contract.
+`TinyDetector` supports multi-slot object supervision up to `num_queries=5` boxes per image (class `0` background, foreground classes `1..num_classes-1`) and empty negative images (`0` boxes). For production large-scale object detection, pass any `torchvision.models.detection` model name such as `"fasterrcnn_resnet50_fpn"` or `"ssdlite320_mobilenet_v3_large"`, or a custom `nn.Module` following the torchvision `(images, targets) -> losses` contract.
 </Note>

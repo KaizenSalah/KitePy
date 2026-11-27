@@ -121,6 +121,8 @@ model.compile(mode: str = "default") -> BaseModel
 model.quantize(bits: int = 8) -> BaseModel
 ```
 
+`quantize(bits=8)` prefers `torchao.quantization` (`Int8DynamicActivationInt8WeightConfig`) when installed and falls back cleanly to `torch.ao.quantization.quantize_dynamic`. Parameterless and dynamically quantized models remain supported by `.predict()`, `.export()`, and `.profile()` via `get_model_device()`.
+
 ### `export()`
 
 ```python

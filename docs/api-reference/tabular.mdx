@@ -28,10 +28,10 @@ Tabular(
 | `task` | `str` | `"classification"` | `"classification"` (`ClassificationAdapter`) or `"regression"` (`RegressionAdapter`, defaults `loss="mse"`, `out_dim=1`) |
 | `**kwargs` | `Any` | — | Config overrides |
 
-### Input Handling & Default Shape
+### Input Handling, Persistence, & Default Shape
 
-- `_preprocess_input(input_data)`: converts `Tensor`, NumPy arrays, or numeric lists to float32 `Tensor` (unsqueezing 1D samples `(F,)` to `(1, F)`).
-- `_default_input_shape()`: returns `(1, self.config.input_dim)`.
+- `_preprocess_input(input_data)`: delegates to `transform_tabular_inputs(input_data, preprocessor=self.preprocessor)` supporting `dict`, `list[dict]`, `pandas.DataFrame`, `.csv` paths, `Tensor`, NumPy arrays, or numeric lists (unsqueezing 1D samples `(F,)` to `(1, F)` and applying saved dummy-encoding, medians, and scaling when fitted).
+- `_default_input_shape()`: returns `(1, int(self.config.input_dim))`.
 
 ---
 
@@ -39,4 +39,6 @@ Tabular(
 
 - **`TabularResNet(input_dim: int, hidden_dims: List[int], out_dim: int, dropout: float = 0.1)`**
 - **`TabularMLP(input_dim: int, hidden_dims: List[int], out_dim: int, dropout: float = 0.1)`**
-- **`load_tabular_data(dataset_name, data_config, train_config)`**: Supports `"synthetic"`, `(X, y)` tuple of arrays/tensors, and `.csv` paths (target = last column, `get_dummies`, median NaN imputation, feature standardization, 80/20 split via `val_split`).
+- **`fit_tabular_preprocessor(X_df_raw)`**: Fits medians, dummy columns, mean, and std into a JSON-serializable preprocessor dict.
+- **`transform_tabular_inputs(input_data, preprocessor=None)`**: Applies stored encoding/scaling cleanly during inference.
+- **`load_tabular_data(dataset_name, data_config, train_config)`**: Supports `"synthetic"`, `(X, y)` tuple of arrays/tensors, and `.csv` paths (target = last column, `fit_tabular_preprocessor`, 80/20 split via `val_split`).

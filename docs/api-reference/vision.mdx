@@ -59,11 +59,11 @@ Lightweight U-Net with bilinear size alignment before decoding. Expects `(B, C, 
 ### `TinyDetector`
 
 ```python
-TinyDetector(in_channels: int = 3, num_classes: int = 10)
+TinyDetector(in_channels: int = 3, num_classes: int = 10, num_queries: int = 5)
 ```
-Lightweight baseline detector following the torchvision detection interface:
-- `train()`: `forward(images, targets)` returns `{"loss_box": smooth_l1, "loss_cls": cross_entropy}` (uses the first box/label per target image).
-- `eval()`: `forward(images)` returns `[{"boxes": Tensor[1, 4], "labels": Tensor[1], "scores": Tensor[1]}, ...]`.
+Lightweight multi-slot detector following the torchvision detection interface:
+- `train()`: `forward(images, targets)` returns `{"loss_box": smooth_l1, "loss_cls": cross_entropy}` (supervises up to `num_queries` boxes per image, plus class `0` background for unmatched/empty slots).
+- `eval()`: `forward(images)` returns `[{"boxes": Tensor[N, 4], "labels": Tensor[N], "scores": Tensor[N]}, ...]`.
 
 ---
 
