@@ -35,11 +35,11 @@ def move_to_device(obj: Any, device: torch.device) -> Any:
 def infer_batch_size(batch: Any) -> int:
     """Infer batch size from a tensor, tuple/list, or mapping batch."""
     if isinstance(batch, torch.Tensor):
-        return batch.size(0)
+        return int(batch.size(0))
     if isinstance(batch, Mapping):
         for v in batch.values():
             if isinstance(v, torch.Tensor) and v.ndim > 0:
-                return v.size(0)
+                return int(v.size(0))
     if isinstance(batch, (tuple, list)) and len(batch) > 0:
         return infer_batch_size(batch[0])
     return 1

@@ -103,14 +103,16 @@ def load_multimodal_data(
         tok = getattr(data_config, "_tokenizer", None) or SimpleCharTokenizer(vocab_size=260)
         full_ds = ImageTextManifestDataset(records, p.parent, tok, img_size=img_size, max_length=min(64, data_config.max_length))
         val_len = max(1, int(len(full_ds) * 0.2)) if len(full_ds) >= 5 else 0
+        m_train_ds: Dataset
+        m_val_ds: Optional[Dataset]
         if val_len > 0:
             perm = torch.randperm(len(full_ds), generator=torch.Generator().manual_seed(train_config.seed)).tolist()
-            train_ds, val_ds = Subset(full_ds, perm[val_len:]), Subset(full_ds, perm[:val_len])
+            m_train_ds, m_val_ds = Subset(full_ds, perm[val_len:]), Subset(full_ds, perm[:val_len])
         else:
-            train_ds, val_ds = full_ds, None
+            m_train_ds, m_val_ds = full_ds, None
         return (
-            DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=0),
-            DataLoader(val_ds, batch_size=bs, shuffle=False, num_workers=0) if val_ds is not None else None,
+            DataLoader(m_train_ds, batch_size=bs, shuffle=True, num_workers=0),
+            DataLoader(m_val_ds, batch_size=bs, shuffle=False, num_workers=0) if m_val_ds is not None else None,
             None,
             {},
         )

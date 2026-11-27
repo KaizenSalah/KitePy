@@ -183,6 +183,7 @@ class Generative(BaseModel):
         """Generate n new samples from the trained generative model."""
         if self.model is None:
             self._build_model()
+        assert self.model is not None
         self.model.eval()
         device = get_model_device(self.model, self.device)
         if hasattr(self.model, "sample"):

@@ -132,10 +132,10 @@ def list_timm_models(filter: Optional[str] = None) -> list:
         import timm
     except ImportError:
         return []
-    models = timm.list_models()
+    models = list(timm.list_models())
     if filter:
         models = [m for m in models if filter.lower() in m.lower()]
-    return models
+    return list(models)
 
 
 def get_timm_model_info(model_name: str) -> Dict[str, Any]:

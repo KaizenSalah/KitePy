@@ -5,7 +5,7 @@ Supports any modality/batch format via TaskAdapter.
 """
 
 from copy import deepcopy
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -41,8 +41,8 @@ class LRFinder:
         self.model_state = deepcopy(model.state_dict())
         self.optimizer_state = deepcopy(optimizer.state_dict())
 
-        self.lrs = []
-        self.losses = []
+        self.lrs: List[float] = []
+        self.losses: List[float] = []
 
     def find(
         self,
@@ -54,8 +54,8 @@ class LRFinder:
     ) -> Tuple[list, list]:
         """Run learning rate range test."""
         self.model.train()
-        self.lrs = []
-        self.losses = []
+        self.lrs.clear()
+        self.losses.clear()
 
         num_steps = max(2, num_steps)
         lr_schedule = np.geomspace(min_lr, max_lr, num_steps)

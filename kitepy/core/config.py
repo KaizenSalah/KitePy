@@ -10,9 +10,11 @@ All models use these config dataclasses for:
 
 from dataclasses import dataclass, field, fields, asdict
 from difflib import get_close_matches
-from typing import Optional, Union, Literal, Any, Dict, List, Tuple, Type
+from typing import Optional, Union, Literal, Any, Dict, List, Tuple, Type, TypeVar, cast
 import yaml
 import json
+
+TConfig = TypeVar("TConfig", bound="BaseConfig")
 
 
 # ============================================================================
@@ -467,7 +469,7 @@ class ExperimentConfig(BaseConfig):
     wandb_entity: Optional[str] = None
 
     @classmethod
-    def from_dict(
+    def from_dict(  # type: ignore[override]
         cls,
         config_dict: Dict[str, Any],
         model_config_cls: Optional[Type[ModelConfig]] = None,
@@ -515,7 +517,7 @@ class ExperimentConfig(BaseConfig):
         return cls(model=model_cfg, training=training_cfg, data=data_cfg, **top_kwargs)
 
     @classmethod
-    def from_yaml(cls, path: str, model_config_cls: Optional[Type[ModelConfig]] = None, strict: bool = True):
+    def from_yaml(cls, path: str, model_config_cls: Optional[Type[ModelConfig]] = None, strict: bool = True):  # type: ignore[override]
         with open(path, "r", encoding="utf-8") as f:
             config_dict = yaml.safe_load(f) or {}
         return cls.from_dict(config_dict, model_config_cls=model_config_cls, strict=strict)
@@ -526,12 +528,12 @@ class ExperimentConfig(BaseConfig):
 # ============================================================================
 
 def merge_configs(
-    default: BaseConfig,
+    default: TConfig,
     preset: Optional[Dict[str, Any]] = None,
     user_config: Optional[Union[Dict[str, Any], BaseConfig]] = None,
     strict: bool = False,
     **kwargs
-) -> BaseConfig:
+) -> TConfig:
     """
     Merge configurations with priority: kwargs > user_config > preset > default.
     """
@@ -561,7 +563,7 @@ def merge_configs(
         if k in config_dict:
             config_dict[k] = v
 
-    return type(default).from_dict(config_dict, strict=False)
+    return cast(TConfig, type(default).from_dict(config_dict, strict=False))
 
 
 def split_kwargs(

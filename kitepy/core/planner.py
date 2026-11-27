@@ -52,7 +52,7 @@ def estimate_static_memory_mb(model: nn.Module, bytes_per_param_state: float = 1
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     frozen = sum(p.numel() for p in model.parameters() if not p.requires_grad)
     total_bytes = trainable * bytes_per_param_state + frozen * 4.0
-    return total_bytes / (1024.0 * 1024.0)
+    return float(total_bytes / (1024.0 * 1024.0))
 
 
 def _slice_batch(batch: Any, start: int, end: int, batch_size: Optional[int] = None) -> Any:
@@ -149,7 +149,7 @@ class ExecutionPlanner:
         if device.type == "cuda" and torch.cuda.is_available():
             try:
                 free_bytes, _ = torch.cuda.mem_get_info(device.index or 0)
-                return (free_bytes / (1024.0 * 1024.0)) * self.safety_factor
+                return float((free_bytes / (1024.0 * 1024.0)) * self.safety_factor)
             except Exception:
                 return 8192.0 * self.safety_factor
         # Nominal budget on CPU/MPS
@@ -196,7 +196,7 @@ class ExecutionPlanner:
                 model.load_state_dict({k: v.to(device) for k, v in cpu_snap.items()})
                 del cpu_snap
                 torch.cuda.empty_cache()
-                delta_mb = max(1.0, (peak - base_mem) / (1024.0 * 1024.0))
+                delta_mb = float(max(1.0, (peak - base_mem) / (1024.0 * 1024.0)))
                 return delta_mb
             except Exception:
                 pass

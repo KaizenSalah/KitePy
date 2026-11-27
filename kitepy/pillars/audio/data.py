@@ -32,7 +32,7 @@ def _load_wav_waveform(path: Path, target_samples: int = 16000) -> torch.Tensor:
             n_frames = wf.getnframes()
             raw = wf.readframes(n_frames)
         dtype = np.int16 if sampwidth == 2 else (np.int8 if sampwidth == 1 else np.int32)
-        arr = np.frombuffer(raw, dtype=dtype).astype(np.float32)
+        arr: np.ndarray = np.frombuffer(raw, dtype=dtype).astype(np.float32)
         if n_channels > 1:
             arr = arr.reshape(-1, n_channels).mean(axis=1)
         max_val = float(2 ** (8 * sampwidth - 1))
@@ -148,16 +148,25 @@ def load_audio_data(
                 full_ds = AudioFolderDataset(samples, classes)
                 val_frac = data_config.val_split if isinstance(data_config.val_split, float) else 0.2
                 val_len = max(1, int(len(full_ds) * val_frac)) if len(full_ds) >= 5 else 0
+                f_train_ds: Dataset
+                f_val_ds: Optional[Dataset]
                 if val_len > 0:
                     perm = torch.randperm(len(full_ds), generator=torch.Generator().manual_seed(train_config.seed)).tolist()
-                    train_ds = Subset(full_ds, perm[val_len:])
-                    val_ds = Subset(full_ds, perm[:val_len])
+                    f_train_ds = Subset(full_ds, perm[val_len:])
+                    f_val_ds = Subset(full_ds, perm[:val_len])
                 else:
-                    train_ds, val_ds = full_ds, None
+                    f_train_ds, f_val_ds = full_ds, None
             meta = {"num_classes": len(classes), "class_names": classes}
+            if train_dir.is_dir() and val_dir.is_dir():
+                return (
+                    DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=0),
+                    DataLoader(val_ds, batch_size=bs, shuffle=False, num_workers=0),
+                    None,
+                    meta,
+                )
             return (
-                DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=0),
-                DataLoader(val_ds, batch_size=bs, shuffle=False, num_workers=0) if val_ds is not None else None,
+                DataLoader(f_train_ds, batch_size=bs, shuffle=True, num_workers=0),
+                DataLoader(f_val_ds, batch_size=bs, shuffle=False, num_workers=0) if f_val_ds is not None else None,
                 None,
                 meta,
             )
@@ -175,14 +184,16 @@ def load_audio_data(
             samples = [(p.parent / r["audio"], c2i[str(r["label"])]) for r in records]
             full_ds = AudioFolderDataset(samples, classes)
             val_len = max(1, int(len(full_ds) * 0.2)) if len(full_ds) >= 5 else 0
+            m_train_ds: Dataset
+            m_val_ds: Optional[Dataset]
             if val_len > 0:
                 perm = torch.randperm(len(full_ds), generator=torch.Generator().manual_seed(train_config.seed)).tolist()
-                train_ds, val_ds = Subset(full_ds, perm[val_len:]), Subset(full_ds, perm[:val_len])
+                m_train_ds, m_val_ds = Subset(full_ds, perm[val_len:]), Subset(full_ds, perm[:val_len])
             else:
-                train_ds, val_ds = full_ds, None
+                m_train_ds, m_val_ds = full_ds, None
             return (
-                DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=0),
-                DataLoader(val_ds, batch_size=bs, shuffle=False, num_workers=0) if val_ds is not None else None,
+                DataLoader(m_train_ds, batch_size=bs, shuffle=True, num_workers=0),
+                DataLoader(m_val_ds, batch_size=bs, shuffle=False, num_workers=0) if m_val_ds is not None else None,
                 None,
                 {"num_classes": len(classes), "class_names": classes},
             )

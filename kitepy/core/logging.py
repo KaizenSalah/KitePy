@@ -78,7 +78,7 @@ def get_logger(
         root_logger.propagate = False
 
     logger = logging.getLogger(name)
-    resolved_level = (level or os.environ.get("KITEPY_LOG_LEVEL", "INFO")).upper()
+    resolved_level = str(level or os.environ.get("KITEPY_LOG_LEVEL") or "INFO").upper()
     target_level = logging.CRITICAL + 10 if resolved_level == "SILENT" else getattr(logging, resolved_level, logging.INFO)
     logger.setLevel(target_level)
     if name == "kitepy" or name.startswith("kitepy."):

@@ -60,7 +60,7 @@ def get_model_device(
 
 def get_num_gpus() -> int:
     """Get number of available GPUs."""
-    return torch.cuda.device_count()
+    return int(torch.cuda.device_count())
 
 
 def get_gpu_memory(device: int = 0) -> float:
@@ -69,7 +69,7 @@ def get_gpu_memory(device: int = 0) -> float:
         return 0.0
     torch.cuda.set_device(device)
     free, _ = torch.cuda.mem_get_info()
-    return free / (1024 ** 3)
+    return float(free / (1024 ** 3))
 
 
 def print_device_info():
@@ -318,7 +318,7 @@ def get_model_size_mb(model: nn.Module) -> float:
     """Get model size in MB."""
     param_size = sum(p.numel() * p.element_size() for p in model.parameters())
     buffer_size = sum(b.numel() * b.element_size() for b in model.buffers())
-    return (param_size + buffer_size) / (1024 ** 2)
+    return float((param_size + buffer_size) / (1024 ** 2))
 
 
 def print_model_summary(model: nn.Module, input_size: Optional[tuple] = None):
@@ -433,7 +433,7 @@ def format_time(seconds: float) -> str:
 def get_lr(optimizer: torch.optim.Optimizer) -> float:
     """Get current learning rate from optimizer."""
     for param_group in optimizer.param_groups:
-        return param_group["lr"]
+        return float(param_group["lr"])
     return 0.0
 
 
@@ -516,8 +516,11 @@ def clear_gpu_memory():
 
 def resolve_auto_value(value: Union[str, int, float], resolver_fn) -> Union[int, float]:
     """Resolve 'auto' values in config."""
-    if isinstance(value, str) and value.lower() == "auto":
-        return resolver_fn()
+    if isinstance(value, str):
+        if value.lower() == "auto":
+            resolved = resolver_fn()
+            return int(resolved) if isinstance(resolved, int) else float(resolved)
+        raise ValueError(f"Unsupported string value '{value}' (expected 'auto' or numeric).")
     return value
 
 
